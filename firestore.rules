@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner() {
+      return request.auth != null &&
+        request.auth.token.email in ['shanelevario@gmail.com', 'shane@arcadecoffeeroasters.com'];
+    }
+    function isAllowed() {
+      return request.auth != null && (
+        isOwner() ||
+        (exists(/databases/$(database)/documents/config/access) &&
+         request.auth.token.email in get(/databases/$(database)/documents/config/access).data.emails)
+      );
+    }
+    match /{document=**} {
+      allow read, write: if isAllowed();
+    }
+  }
+}
