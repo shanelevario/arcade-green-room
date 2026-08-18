@@ -215,7 +215,12 @@ function deriveInventory(s){
   var counts={};
   s.sections.forEach(function(sec){ if(sec.usageKey&&!sec.hidden) counts[sec.usageKey]=(counts[sec.usageKey]||0)+sec.rows.length; });
   function catVal(list,key){ var m=(list||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
-  var cur=curWeekIdx();
+  /* compute the current week from s itself: this runs during bootstrap,
+     before the global state exists */
+  var start=parseLocalDate(s.calendar.start); var t=new Date(); t=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+  var cur=s.calendar.numWeeks-1;
+  if(t<start) cur=0;
+  else for(var wi=0;wi<s.calendar.numWeeks;wi++){ var wa=new Date(start); wa.setDate(wa.getDate()+wi*7); var wb=new Date(wa); wb.setDate(wb.getDate()+6); if(t>=wa&&t<=wb){ cur=wi; break; } }
   var map={}, out=[];
   s.sections.forEach(function(sec){
     if(!sec.usageKey||sec.hidden) return;
