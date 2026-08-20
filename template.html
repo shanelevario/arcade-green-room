@@ -1011,9 +1011,13 @@ function openEmailDrafts(o){
   var blocks=[];
   function lineLbs(l){ return (Number(l.bags)||0)*(Number(l.bagWeight)||0); }
   function lineCost(l){ return lineLbs(l)*(Number(l.price)||0); }
+  /* the coffee name often already carries its origin, so only add it once */
+  function needsOrigin(l){
+    if(!l.origin) return false;
+    return invKey(l.coffee).indexOf(invKey(l.origin))<0;
+  }
   function coffeeLabel(l){
-    if(!l.origin) return l.coffee;
-    /* a lot name already carries a dash, so a second one reads badly */
+    if(!needsOrigin(l)) return l.coffee;
     return l.coffee+(String(l.coffee).indexOf(' - ')>-1?', ':' - ')+l.origin;
   }
   var po='Hey '+(state.team.poContact||'Alex')+', can I get POs for the following?\n';
@@ -1028,7 +1032,7 @@ function openEmailDrafts(o){
   blocks.push({title:'1. PO request to '+(state.team.poContact||'Alex'),subject:'PO Request',body:po.trim()});
   order.forEach(function(imp){
     var b='Hey '+importerFirstName(imp)+'!\n\nHope all is well. We need some coffees released!\n\nWe need the following released:\n';
-    groups[imp].forEach(function(l){ b+=l.bags+'\t'+l.coffee+'\t'+(l.origin||'')+'\n'; });
+    groups[imp].forEach(function(l){ b+=l.bags+'\t'+l.coffee+'\t'+(needsOrigin(l)?l.origin:'')+'\n'; });
     b+='\nPO is attached for reference! Can you note for consolidation? We will be handling shipping!';
     blocks.push({title:'2. Release request to '+imp,subject:'Release Request '+md,body:b});
   });
@@ -1036,7 +1040,7 @@ function openEmailDrafts(o){
   var c='Hey all!\n\nCan you consolidate:\n';
   all.forEach(function(l){
     bags+=Number(l.bags)||0; wgt+=lineLbs(l);
-    var tail=[(l.origin||''),(l.importer?'('+l.importer+')':'')].filter(Boolean).join(' ');
+    var tail=[(needsOrigin(l)?l.origin:''),(l.importer?'('+l.importer+')':'')].filter(Boolean).join(' ');
     c+=l.bags+'\t'+l.coffee+'\t'+tail+'\n';
   });
   c+='\nnumber of bags - '+bags+'\nweight of the coffee - '+Math.round(wgt).toLocaleString('en-US')+'lbs\n\nThey should all be sent in today and tomorrow morning! Thank you.';
