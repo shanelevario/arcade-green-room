@@ -537,6 +537,15 @@ function positionFor(coffee){
   if(!hit) hit=pool.filter(function(p){ return invKey(p.coffee+(p.origin?' - '+p.origin:''))===name; })[0];
   if(!hit) hit=pool.filter(function(p){ return invKey(p.coffee).split(' - ')[0].trim()===base; })[0];
   if(!hit) hit=pool.filter(function(p){ var pk=invKey(p.coffee).split(' - ')[0].trim(); return pk&&base&&(pk.indexOf(base)===0||base.indexOf(pk)===0); })[0];
+  /* last resort: same first word and the origin shows up in the calendar name,
+     which is how "SWP Honduras" on the calendar finds "SWP Decaf" from Honduras */
+  if(!hit){
+    var w0=base.split(' ')[0];
+    if(w0) hit=pool.filter(function(p){
+      var o=invKey(p.origin);
+      return invKey(p.coffee).split(' ')[0]===w0&&o&&name.indexOf(o)>-1;
+    })[0];
+  }
   return hit||null;
 }
 /* How much to order: enough to land one week of usage above the minimum. */
