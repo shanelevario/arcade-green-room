@@ -196,41 +196,81 @@ function normalize(s){
   });
   s.orders=s.orders||[]; s.position=s.position||[]; s.importers=s.importers||[];
   s.team=s.team||{poContact:'Alex'};
-  if(!s.inventory) s.inventory=deriveInventory(s);
+  s.inventory=s.inventory||[];
   s.inventory.forEach(function(it){ if(!it.id) it.id=uid(); });
   delete s.onHand;
+  return syncInventory(s);
 }
-/* First-run migration: build per-coffee tracking from whatever is on the calendar
-   this week, splitting each category's usage and minimum across its components.
-   A coffee used in two slots (like Palmera) gets the summed share. */
-function deriveInventory(s){
+/* Keep the runway in step with the calendar. Every coffee scheduled in the
+   next 6 weeks is tracked automatically, so nobody has to add one by hand.
+   Each slot's category usage and minimum are split across its components,
+   and a coffee filling two slots at once (like Palmera) gets both shares.
+   Anything edited by hand is left alone. */
+var INV_WINDOW=6;
+function invKey(name){ return String(name==null?'':name).trim().toLowerCase(); }
+function splitCell(v){
+  return String(v==null?'':v).split('/').map(function(x){return x.trim();}).filter(Boolean);
+}
+function curWeekIdxOf(s){
+  var start=parseLocalDate(s.calendar.start);
+  var t=new Date(); t=new Date(t.getFullYear(),t.getMonth(),t.getDate());
+  if(t<start) return 0;
+  for(var i=0;i<s.calendar.numWeeks;i++){
+    var a=new Date(start); a.setDate(a.getDate()+i*7);
+    var b=new Date(a); b.setDate(b.getDate()+6);
+    if(t>=a&&t<=b) return i;
+  }
+  return s.calendar.numWeeks-1;
+}
+function syncInventory(s){
+  s.inventory=s.inventory||[];
   var counts={};
   s.sections.forEach(function(sec){ if(sec.usageKey&&!sec.hidden) counts[sec.usageKey]=(counts[sec.usageKey]||0)+sec.rows.length; });
   function catVal(list,key){ var m=(list||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
-  /* compute the current week from s itself: this runs during bootstrap,
-     before the global state exists */
-  var start=parseLocalDate(s.calendar.start); var t=new Date(); t=new Date(t.getFullYear(),t.getMonth(),t.getDate());
-  var cur=s.calendar.numWeeks-1;
-  if(t<start) cur=0;
-  else for(var wi=0;wi<s.calendar.numWeeks;wi++){ var wa=new Date(start); wa.setDate(wa.getDate()+wi*7); var wb=new Date(wa); wb.setDate(wb.getDate()+6); if(t>=wa&&t<=wb){ cur=wi; break; } }
-  var map={}, out=[];
-  s.sections.forEach(function(sec){
-    if(!sec.usageKey||sec.hidden) return;
-    var uShare=catVal(s.usage,sec.usageKey)/counts[sec.usageKey];
-    var mShare=catVal(s.minimums,sec.usageKey)/counts[sec.usageKey];
-    sec.rows.forEach(function(r){
-      var v=((r.a||[])[cur]||'').trim();
-      if(!v||v.indexOf('/')>-1) return;
-      var k=v.toLowerCase();
-      if(map[k]){ map[k].usageLbs+=uShare; map[k].minLbs+=mShare; return; }
-      var it={id:uid(),coffee:v,usageLbs:uShare,minLbs:mShare,onHand:null,updated:null};
-      map[k]=it; out.push(it);
+  var cur=curWeekIdxOf(s);
+  var last=Math.min(s.calendar.numWeeks-1,cur+INV_WINDOW-1);
+  var seen={};
+  for(var i=cur;i<=last;i++){
+    var wkUse={}, wkMin={};
+    s.sections.forEach(function(sec){
+      if(sec.hidden) return;
+      var n=sec.usageKey?(counts[sec.usageKey]||1):0;
+      var uShare=sec.usageKey?catVal(s.usage,sec.usageKey)/n:0;
+      var mShare=sec.usageKey?catVal(s.minimums,sec.usageKey)/n:0;
+      sec.rows.forEach(function(r){
+        splitCell((r.a||[])[i]).forEach(function(name){
+          var k=invKey(name);
+          if(!seen[k]) seen[k]={name:name,usage:0,min:0};
+          wkUse[k]=(wkUse[k]||0)+uShare;
+          wkMin[k]=(wkMin[k]||0)+mShare;
+        });
+      });
     });
+    Object.keys(wkUse).forEach(function(k){
+      if(wkUse[k]>seen[k].usage) seen[k].usage=wkUse[k];
+      if(wkMin[k]>seen[k].min) seen[k].min=wkMin[k];
+    });
+  }
+  var changed=false, byKey={};
+  s.inventory.forEach(function(it){ byKey[invKey(it.coffee)]=it; });
+  Object.keys(seen).forEach(function(k){
+    var want=seen[k], it=byKey[k];
+    var u=Math.round(want.usage||0), m=Math.round(want.min||0);
+    if(!it){
+      s.inventory.push({id:uid(),coffee:want.name,usageLbs:u,minLbs:m,onHand:null,updated:null,auto:true});
+      changed=true; return;
+    }
+    if(!it.custom&&(it.usageLbs!==u||it.minLbs!==m)){ it.usageLbs=u; it.minLbs=m; changed=true; }
   });
-  out.forEach(function(it){ it.usageLbs=Math.round(it.usageLbs); it.minLbs=Math.round(it.minLbs); });
-  return out;
+  var before=s.inventory.length;
+  s.inventory=s.inventory.filter(function(it){
+    if(it.archived||it.custom||!it.auto) return true;
+    if(seen[invKey(it.coffee)]) return true;
+    return it.onHand!=null&&it.onHand!=='';
+  });
+  if(s.inventory.length!==before) changed=true;
+  return changed;
 }
-
 /* ---------- utils ---------- */
 function esc(x){ return String(x==null?'':x).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 function money(n){ return '$'+(Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -273,6 +313,9 @@ function coffeeNames(){
    counter. Saves are debounced and transactional; a live listener keeps
    every open screen current within seconds. Last write wins, but the
    window is tiny because saves happen moments after each edit. */
+/* Anything that changes the calendar or the usage figures re-runs the
+   runway sync, so tracked coffees follow the plan without anyone adding them. */
+function resync(){ syncInventory(state); markDirty(); }
 function markDirty(){
   if(!state) return;
   dirty=true; renderSyncStatus('pending');
@@ -325,7 +368,7 @@ function startListening(){
       var d=snap.data();
       rev=d.rev||0; lastSavedBy=d.updatedBy||'';
       try{ state=JSON.parse(d.json); }catch(e){ state={}; }
-      normalize(state); _weeks=null; render();
+      var synced=normalize(state); _weeks=null; render(); if(synced) markDirty();
     } else adoptRemote(snap);
   },function(err){
     if(err&&err.code==='permission-denied'){ noAccess=true; render(); }
@@ -460,37 +503,76 @@ function invStatus(it){
   return {cls:'inv-good',rank:3,chip:'<span class="chip good">Covered</span>',cover:cover};
 }
 function usedInSlots(coffee){
-  var cur=curWeekIdx(), base=String(coffee).toLowerCase().split(' - ')[0].trim(), hits=[];
-  if(!base) return hits;
-  state.sections.forEach(function(sec){
-    if(sec.hidden) return;
-    sec.rows.forEach(function(r){
-      var v=cellVal(r,cur).toLowerCase();
-      if(v&&v.indexOf(base)>-1) hits.push(sec.name+(sec.rows.length>1?' '+r.name:''));
+  var cur=curWeekIdx(), w=weeks(), key=invKey(coffee), hits=[], soon=null;
+  if(!key) return {now:hits,soonWeek:null};
+  var last=Math.min(w.length-1,cur+INV_WINDOW-1);
+  for(var i=cur;i<=last;i++){
+    state.sections.forEach(function(sec){
+      if(sec.hidden) return;
+      sec.rows.forEach(function(r){
+        if(splitCell(cellVal(r,i)).map(invKey).indexOf(key)<0) return;
+        var label=sec.name+(sec.rows.length>1?' '+r.name:'');
+        if(i===cur){ if(hits.indexOf(label)<0) hits.push(label); }
+        else if(soon===null) soon=i;
+      });
     });
-  });
-  return hits;
+  }
+  return {now:hits,soonWeek:soon};
+}
+/* Find the booked position entry for a coffee, so we know its bag size.
+   Calendar names carry the origin ("Acacia G2 - Ethiopia") while position
+   splits it out, so fall back to matching on the name before the dash. */
+function positionFor(coffee){
+  var name=invKey(coffee), base=name.split(' - ')[0].trim();
+  var pool=state.position.filter(function(p){ return !p.archived&&Number(p.bagWeight)>0; });
+  var hit=pool.filter(function(p){ return invKey(p.coffee)===name; })[0];
+  if(!hit) hit=pool.filter(function(p){ return invKey(p.coffee+(p.origin?' - '+p.origin:''))===name; })[0];
+  if(!hit) hit=pool.filter(function(p){ return invKey(p.coffee).split(' - ')[0].trim()===base; })[0];
+  if(!hit) hit=pool.filter(function(p){ var pk=invKey(p.coffee).split(' - ')[0].trim(); return pk&&base&&(pk.indexOf(base)===0||base.indexOf(pk)===0); })[0];
+  return hit||null;
+}
+/* How much to order: enough to land one week of usage above the minimum. */
+function orderAdvice(it){
+  var oh=it.onHand;
+  if(oh==null||oh===''||isNaN(Number(oh))) return null;
+  var target=(Number(it.minLbs)||0)+(Number(it.usageLbs)||0);
+  var need=target-Number(oh);
+  if(need<=0) return {need:0};
+  var p=positionFor(it.coffee);
+  if(!p) return {need:need,bags:null};
+  var bw=Number(p.bagWeight)||0;
+  var bags=Math.ceil(need/bw);
+  return {need:need,bags:bags,bagWeight:bw,lbs:bags*bw,importer:p.importer||'',coffee:p.coffee};
+}
+function adviceHTML(a){
+  if(!a) return '';
+  if(!a.need) return '<span class="faint" style="font-size:12px">Set</span>';
+  if(a.bags==null) return '<b class="num">'+lbs(Math.ceil(a.need))+' lbs</b><div class="faint" style="font-size:10.5px">no bag size on file</div>';
+  return '<b class="num">'+a.bags+(a.bags===1?' bag':' bags')+'</b><div class="faint" style="font-size:10.5px">'+lbs(Math.round(a.lbs))+' lbs'+(a.importer?', '+esc(a.importer):'')+'</div>';
 }
 function renderDashboard(v){
   var cur=curWeekIdx(), w=weeks();
   var showArch=v.getAttribute('data-invarch')==='1';
   var items=state.inventory.filter(function(it){return showArch?it.archived:!it.archived;});
   var sorted=items.map(function(it){return {it:it,st:invStatus(it)};}).sort(function(a,b){ return a.st.rank-b.st.rank||a.it.coffee.localeCompare(b.it.coffee); });
-  var html='<div class="toolbar"><h2 class="sec" style="margin:0">Inventory runway'+(showArch?'<small>archived</small>':'<small>on-hand lbs from Cropster, per coffee</small>')+'</h2><div class="spacer"></div>'+
+  var html='<div class="toolbar"><h2 class="sec" style="margin:0">Inventory runway'+(showArch?'<small>archived</small>':'<small>tracks every coffee on the calendar for the next 6 weeks</small>')+'</h2><div class="spacer"></div>'+
     '<button class="btn" id="inv-add">Track a coffee</button>'+
     '<button class="btn ghost small" id="inv-arch">'+(showArch?'Back to current':'View archived')+'</button></div>'+
-    '<div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Coffee</th><th>Used in</th><th class="r">On hand</th><th class="r">Lbs/wk</th><th class="r">Cover</th><th class="r">Min lbs</th><th>Status</th><th></th></tr></thead><tbody>';
-  if(!sorted.length) html+='<tr><td colspan="8" class="muted">'+(showArch?'Nothing archived.':'Nothing tracked yet. Hit "Track a coffee" to add one.')+'</td></tr>';
+    '<div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Coffee</th><th>Used in</th><th class="r">On hand</th><th class="r">Lbs/wk</th><th class="r">Cover</th><th class="r">Min lbs</th><th>Status</th><th class="r">Order</th><th></th></tr></thead><tbody>';
+  if(!sorted.length) html+='<tr><td colspan="9" class="muted">'+(showArch?'Nothing archived.':'Nothing tracked yet. Hit "Track a coffee" to add one.')+'</td></tr>';
   sorted.forEach(function(row){
     var it=row.it, st=row.st;
     var slots=usedInSlots(it.coffee);
+    var where=slots.now.length?slots.now.join(', ')
+      :(slots.soonWeek!=null?'Starts '+fmtMD(w[slots.soonWeek].start):'Not on the calendar');
     html+='<tr class="'+st.cls+'"><td><b>'+esc(it.coffee)+'</b></td>'+
-      '<td class="muted" style="font-size:12px">'+esc(slots.join(', ')||'Not on the calendar this week')+'</td>'+
+      '<td class="muted" style="font-size:12px">'+esc(where)+'</td>'+
       '<td class="r"><input type="number" min="0" step="1" class="oh num" data-inv="'+esc(it.id)+'" value="'+esc(it.onHand!=null?it.onHand:'')+'" placeholder="lbs" aria-label="On hand lbs for '+esc(it.coffee)+'">'+(it.updated?'<div class="faint" style="font-size:10.5px">updated '+esc(new Date(it.updated).toLocaleDateString('en-US',{month:'short',day:'numeric'}))+'</div>':'')+'</td>'+
       '<td class="r num">'+lbs(it.usageLbs)+'</td>'+
       '<td class="r num">'+(st.cover!=null?'<b>'+st.cover.toFixed(1)+' wks</b>':'')+'</td>'+
       '<td class="r num">'+lbs(it.minLbs)+'</td>'+
       '<td>'+st.chip+'</td>'+
+      '<td class="r">'+adviceHTML(orderAdvice(it))+'</td>'+
       '<td style="white-space:nowrap"><button class="btn ghost small" data-inved="'+esc(it.id)+'">Edit</button> <button class="btn ghost small" data-invarch2="'+esc(it.id)+'">'+(it.archived?'Restore':'Archive')+'</button></td></tr>';
   });
   html+='</tbody></table></div>';
@@ -562,13 +644,14 @@ function openInventoryEditor(id,v){
     '<div class="full"><label>Coffee</label><input id="iv-coffee" list="iv-dl" value="'+esc(it.coffee)+'">'+datalistHTML('iv-dl')+'</div>'+
     '<div><label>Lbs used per week</label><input id="iv-use" type="number" min="0" step="1" value="'+esc(it.usageLbs)+'"></div>'+
     '<div><label>Minimum lbs (reorder point)</label><input id="iv-min" type="number" min="0" step="1" value="'+esc(it.minLbs)+'"></div>'+
-    '<div class="full muted" style="font-size:12px">A coffee used in two slots (like Palmera in Espresso and Third St) should get the combined weekly usage.</div>'+
+    '<div class="full muted" style="font-size:12px">These numbers are worked out from the calendar automatically. Changing them here pins your values for this coffee and stops the calendar overwriting them.</div>'+
   '</div>';
   openModal(id?'Edit tracked coffee':'Track a coffee',body,function(m){
     if(!m.querySelector('#iv-coffee').value.trim()){ toast('Give the coffee a name.'); return false; }
     it.coffee=m.querySelector('#iv-coffee').value.trim();
     it.usageLbs=Number(m.querySelector('#iv-use').value)||0;
     it.minLbs=Number(m.querySelector('#iv-min').value)||0;
+    it.custom=true;
     if(!id) state.inventory.push(it);
     markDirty(); renderDashboard(v);
   });
@@ -615,7 +698,7 @@ function renderCalendar(v){
   function jump(){ var c=v.querySelector('th.cur'); if(c) wrapEl.scrollLeft=Math.max(0,c.offsetLeft-260); }
   jump();
   v.querySelector('#cal-today').onclick=jump;
-  v.querySelector('#cal-extend').onclick=function(){ state.calendar.numWeeks+=8; _weeks=null; markDirty(); renderCalendar(v); toast('Calendar extended 8 weeks.'); };
+  v.querySelector('#cal-extend').onclick=function(){ state.calendar.numWeeks+=8; _weeks=null; resync(); renderCalendar(v); toast('Calendar extended 8 weeks.'); };
   var hb=v.querySelector('#cal-hidden');
   if(hb) hb.onclick=function(){ v.setAttribute('data-hidden',showHidden?'0':'1'); renderCalendar(v); };
   v.querySelector('#cal-addslot').onclick=function(){
@@ -630,12 +713,12 @@ function renderCalendar(v){
       var n=Number(m.querySelector('#as-n').value)||1;
       var rows=n===2?[{name:'Component 1',a:[]},{name:'Component 2',a:[]}]:[{name:'Coffee',a:[]}];
       state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows});
-      markDirty(); renderCalendar(v); toast('Slot added at the bottom of the calendar.');
+      resync(); renderCalendar(v); toast('Slot added at the bottom of the calendar.');
     });
   };
   v.querySelectorAll('[data-hide]').forEach(function(b){ b.onclick=function(){
     var sec=state.sections[+b.getAttribute('data-hide')];
-    sec.hidden=!sec.hidden; markDirty(); renderCalendar(v);
+    sec.hidden=!sec.hidden; resync(); renderCalendar(v);
     toast(sec.hidden?'Hidden. The history is kept; find it under "Show hidden slots".':'Slot is back on the calendar.');
   }; });
   v.querySelectorAll('td.cell').forEach(function(td){
@@ -656,12 +739,12 @@ function openCellEditor(si,ri,i,v){
     var val=m.querySelector('#ce-val').value.trim();
     var n=Math.max(1,Math.min(w.length-i,Number(m.querySelector('#ce-n').value)||1));
     for(var k=i;k<i+n;k++) row.a[k]=val;
-    markDirty(); renderCalendar(v);
+    resync(); renderCalendar(v);
   });
   bg.querySelector('#ce-clear').onclick=function(){
     var n=Math.max(1,Number(bg.querySelector('#ce-n').value)||1);
     for(var k=i;k<Math.min(weeks().length,i+n);k++) row.a[k]='';
-    markDirty(); renderCalendar(v);
+    resync(); renderCalendar(v);
     bg.querySelector('[data-x="cancel"]').click();
   };
 }
@@ -917,10 +1000,21 @@ function openEmailDrafts(o){
   var groups={}, order=[];
   all.forEach(function(l){ var k=l.importer||'Unknown importer'; if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(l); });
   var blocks=[];
+  function lineLbs(l){ return (Number(l.bags)||0)*(Number(l.bagWeight)||0); }
+  function lineCost(l){ return lineLbs(l)*(Number(l.price)||0); }
+  function coffeeLabel(l){
+    if(!l.origin) return l.coffee;
+    /* a lot name already carries a dash, so a second one reads badly */
+    return l.coffee+(String(l.coffee).indexOf(' - ')>-1?', ':' - ')+l.origin;
+  }
   var po='Hey '+(state.team.poContact||'Alex')+', can I get POs for the following?\n';
   order.forEach(function(imp){
-    po+='\n'+imp+'\n';
-    groups[imp].forEach(function(l){ po+=l.bags+'\t'+l.coffee+'\t'+(l.origin||'')+'\n'; });
+    var tot=0;
+    groups[imp].forEach(function(l){ tot+=lineCost(l); });
+    po+='\n'+imp+' ('+money(tot)+')\n';
+    groups[imp].forEach(function(l){
+      po+='('+l.bags+') '+coffeeLabel(l)+' ('+money(lineCost(l))+')\n';
+    });
   });
   blocks.push({title:'1. PO request to '+(state.team.poContact||'Alex'),subject:'PO Request',body:po.trim()});
   order.forEach(function(imp){
@@ -932,9 +1026,9 @@ function openEmailDrafts(o){
   var bags=0,wgt=0;
   var c='Hey all!\n\nCan you consolidate:\n';
   all.forEach(function(l){
-    var exact=(Number(l.bags)||0)*(Number(l.bagWeight)||0);
-    bags+=Number(l.bags)||0; wgt+=exact;
-    c+=l.bags+'\t'+l.coffee+'\t'+(l.origin||'')+'\t'+Math.round(exact)+'\t'+(l.importer||'')+'\n';
+    bags+=Number(l.bags)||0; wgt+=lineLbs(l);
+    var tail=[(l.origin||''),(l.importer?'('+l.importer+')':'')].filter(Boolean).join(' ');
+    c+=l.bags+'\t'+l.coffee+'\t'+tail+'\n';
   });
   c+='\nnumber of bags - '+bags+'\nweight of the coffee - '+Math.round(wgt).toLocaleString('en-US')+'lbs\n\nThey should all be sent in today and tomorrow morning! Thank you.';
   blocks.push({title:'3. Consolidation to the annex',subject:'Shipment/Consolidation '+md,body:c});
@@ -1027,14 +1121,14 @@ function renderSettings(v){
   '<h2 class="sec">How this works</h2><div class="card muted" style="font-size:13px">'+
   '<p style="margin-top:0"><b>Calendar</b>: click any cell to set a coffee and fill it forward. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
   '<p><b>Position</b>: book coffees as you contract them. When an order lands, use "Deduct bags from position" on the order so the position stays true.</p>'+
-  '<p><b>Runway</b>: each coffee on the dashboard has its own weekly usage and minimum. Enter on-hand lbs from Cropster and the app flags exactly which coffee needs an order.</p>'+
+  '<p><b>Runway</b>: every coffee on the calendar for the next 6 weeks shows up on the dashboard by itself, with its weekly usage and minimum worked out from the plan. Enter on-hand lbs from Cropster and the Order column tells you how many bags to buy to land one week of usage above the minimum. Bag sizes come from the position, so book a coffee there to get bags instead of pounds.</p>'+
   '<p><b>Order emails</b>: "Draft emails" on any order writes the PO request, the release email for each importer, and the consolidation email for the annex. Copy, paste into Gmail, send. Nothing sends from this page.</p>'+
   '<p style="margin-bottom:0"><b>Saving</b>: automatic. Every edit saves within a couple seconds and shows up live for everyone with the app open. The header shows who saved last.</p>'+
   '</div></div></div>';
   v.innerHTML=html;
   v.querySelector('#st-po').onchange=function(){ state.team.poContact=this.value.trim()||'Alex'; markDirty(); };
-  v.querySelectorAll('input[data-u]').forEach(function(inp){ inp.onchange=function(){ state.usage[+inp.getAttribute('data-u')].lbs=Number(inp.value)||0; markDirty(); }; });
-  v.querySelectorAll('input[data-m]').forEach(function(inp){ inp.onchange=function(){ state.minimums[+inp.getAttribute('data-m')].lbs=Number(inp.value)||0; markDirty(); }; });
+  v.querySelectorAll('input[data-u]').forEach(function(inp){ inp.onchange=function(){ state.usage[+inp.getAttribute('data-u')].lbs=Number(inp.value)||0; resync(); }; });
+  v.querySelectorAll('input[data-m]').forEach(function(inp){ inp.onchange=function(){ state.minimums[+inp.getAttribute('data-m')].lbs=Number(inp.value)||0; resync(); }; });
   loadTeamCard(v.querySelector('#st-team'));
   v.querySelector('#st-export').onclick=function(){
     var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
