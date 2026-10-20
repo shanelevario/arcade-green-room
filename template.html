@@ -110,7 +110,7 @@ table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);m
 table.cal thead .rowlabel{z-index:4}
 table.cal .rowlabel .comp{color:var(--ink-soft)}
 table.cal tr.grouprow td{background:var(--line-soft);border-top:2px solid var(--ink);border-bottom:1px solid var(--line);padding-top:9px;padding-bottom:9px}
-table.cal tr.grouprow td.rowlabel{background:var(--line-soft);font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.cal tr.grouprow td.rowlabel{background:var(--line-soft);font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);white-space:normal;line-height:1.3}
 table.cal tr.grouprow td.rowlabel .gcount{font-family:var(--font-body);letter-spacing:.3px;text-transform:none;color:var(--ink-faint);font-size:11px;margin-left:8px}
 table.cal tr.secrow td.rowlabel .nm{cursor:grab}
 table.cal tr.secrow td.rowlabel .nm:hover{text-decoration:underline dotted}
@@ -758,7 +758,7 @@ function renderCalendar(v){
   html+='</tr></thead><tbody>';
   state.groups.forEach(function(g,gi){
     var inGroup=[]; state.sections.forEach(function(sec,si){ if(groupIndexOf(sec)===gi&&(!sec.hidden||showHidden)) inGroup.push(si); });
-    html+='<tr class="grouprow" data-group="'+gi+'"><td class="rowlabel">'+esc(g)+'<span class="gcount">'+inGroup.length+'</span></td><td colspan="'+w.length+'"></td></tr>';
+    html+='<tr class="grouprow" data-group="'+gi+'"><td class="rowlabel" title="'+esc(g)+'">'+esc(g)+'</td><td colspan="'+w.length+'"></td></tr>';
     inGroup.forEach(function(si){ html+=sectionRows(si); });
   });
   function sectionRows(si){
