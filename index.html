@@ -117,6 +117,12 @@ table.cal thead th .wk{display:block;color:var(--ink-faint);font-size:10px;lette
 table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);min-width:240px;max-width:240px;border-right:1px solid var(--line);font-size:12.5px}
 table.cal thead .rowlabel{z-index:4}
 table.cal .rowlabel .comp{color:var(--ink-soft)}
+table.cal tr.grouprow td{background:var(--line-soft);border-top:2px solid var(--ink);border-bottom:1px solid var(--line);padding-top:9px;padding-bottom:9px}
+table.cal tr.grouprow td.rowlabel{background:var(--line-soft);font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.cal tr.grouprow td.rowlabel .gcount{font-family:var(--font-body);letter-spacing:.3px;text-transform:none;color:var(--ink-faint);font-size:11px;margin-left:8px}
+table.cal tr.secrow td.rowlabel .nm{cursor:grab}
+table.cal tr.secrow td.rowlabel .nm:hover{text-decoration:underline dotted}
+table.cal tr.dropto td{box-shadow:inset 0 3px 0 var(--rose)}
 table.cal tr.secrow td{background:var(--cream);border-bottom:1px solid var(--line)}
 table.cal tr.secrow td.rowlabel{background:var(--cream);font-family:var(--font-display);letter-spacing:2px;text-transform:uppercase;font-size:12.5px;white-space:nowrap}
 table.cal tr.secrow td .sub{font-family:var(--font-body);letter-spacing:.3px;text-transform:none;color:var(--ink-soft);font-size:11px;margin-left:8px}
@@ -207,6 +213,8 @@ function normalize(s){
   });
   s.orders=s.orders||[]; s.position=s.position||[]; s.importers=s.importers||[];
   s.team=s.team||{poContact:'Alex'};
+  s.groups=(s.groups&&s.groups.length)?s.groups:DEFAULT_GROUPS.slice();
+  s.sections.forEach(function(sec){ if(!sec.group||s.groups.indexOf(sec.group)<0) sec.group=defaultGroup(sec,s.groups); });
   s.inventory=s.inventory||[];
   s.inventory.forEach(function(it){ if(!it.id) it.id=uid(); });
   delete s.onHand;
@@ -218,6 +226,30 @@ function normalize(s){
    and a coffee filling two slots at once (like Palmera) gets both shares.
    Anything edited by hand is left alone. */
 var INV_WINDOW=6;
+/* Calendar groups. Every slot belongs to one; the first run sorts existing
+   slots by what they are, and the slot editor can move them after that. */
+var DEFAULT_GROUPS=['Blends, Decaf & Dark Roast','Custom Blends','Single Origins & Special Releases'];
+function defaultGroup(sec,groups){
+  var n=String(sec.name||'').toLowerCase();
+  if(['espresso','thirdst','decaf','clyde'].indexOf(sec.usageKey)>-1) return groups[0];
+  if(sec.usageKey==='single'||n.indexOf('single origin')>-1||n.indexOf('special')>-1||n.indexOf('cold brew')>-1) return groups[groups.length-1];
+  return groups[1]||groups[0];
+}
+function groupIndexOf(sec){ var i=state.groups.indexOf(sec.group); return i<0?state.groups.length-1:i; }
+/* put a slot right before another slot, or at the end of a group */
+function placeSection(si,beforeSi,groupName){
+  var sec=state.sections[si];
+  state.sections.splice(si,1);
+  if(beforeSi!=null){
+    var target=beforeSi>si?beforeSi-1:beforeSi;
+    sec.group=state.sections[target].group;
+    state.sections.splice(target,0,sec);
+  } else {
+    sec.group=groupName;
+    var last=-1; state.sections.forEach(function(x,i){ if(x.group===groupName) last=i; });
+    state.sections.splice(last+1,0,sec);
+  }
+}
 function invKey(name){ return String(name==null?'':name).trim().toLowerCase(); }
 function splitCell(v){
   return String(v==null?'':v).split('/').map(function(x){return x.trim();}).filter(Boolean);
@@ -732,11 +764,16 @@ function renderCalendar(v){
   html+='<div class="cal-wrap"><table class="cal"><thead><tr><th class="rowlabel">2026 Calendar</th>';
   w.forEach(function(wk,i){ html+='<th class="'+(i===cur?'cur':'')+'"><span class="wk">Wk '+wk.num+(wk.year!==2026?' &middot; '+wk.year:'')+'</span>'+esc(wk.label)+'</th>'; });
   html+='</tr></thead><tbody>';
-  state.sections.forEach(function(sec,si){
-    if(sec.hidden&&!showHidden) return;
+  state.groups.forEach(function(g,gi){
+    var inGroup=[]; state.sections.forEach(function(sec,si){ if(groupIndexOf(sec)===gi&&(!sec.hidden||showHidden)) inGroup.push(si); });
+    html+='<tr class="grouprow" data-group="'+gi+'"><td class="rowlabel">'+esc(g)+'<span class="gcount">'+inGroup.length+'</span></td><td colspan="'+w.length+'"></td></tr>';
+    inGroup.forEach(function(si){ html+=sectionRows(si); });
+  });
+  function sectionRows(si){
+    var sec=state.sections[si], html='';
     var use=sec.usageKey?usageOf(sec.usageKey)+' lbs/wk':'';
-    html+='<tr class="secrow"><td class="rowlabel"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px">'+
-      '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sec.name)+(sec.sub?'<span class="sub">'+esc(sec.sub)+'</span>':'')+'</span>'+
+    html+='<tr class="secrow" draggable="true" data-si="'+si+'"><td class="rowlabel"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px">'+
+      '<span class="nm" data-edit="'+si+'" title="Edit this slot, or drag it to a new spot" style="min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sec.name)+(sec.sub?'<span class="sub">'+esc(sec.sub)+'</span>':'')+'</span>'+
       (sec.hidden?'<span class="chip plain">Hidden</span>':'')+
       '<span style="white-space:nowrap">'+
       '<button class="btn ghost small secbtn" data-move="'+si+'" data-dir="-1" title="Move this slot up">&uarr;</button> '+
@@ -753,8 +790,11 @@ function renderCalendar(v){
       }
       html+='</tr>';
     });
-  });
+    return html;
+  }
   html+='</tbody></table></div>';
+  var prevWrap=v.querySelector('.cal-wrap');
+  var keep=prevWrap?{t:prevWrap.scrollTop,l:prevWrap.scrollLeft}:null;
   v.innerHTML=html;
   var wrapEl=v.querySelector('.cal-wrap');
   /* land with one past week showing, so the current week is the second
@@ -768,8 +808,26 @@ function renderCalendar(v){
     var contentX=cr.left-wr.left+wrapEl.scrollLeft;
     wrapEl.scrollLeft=Math.max(0,Math.round(contentX-labelW-prevW));
   }
-  jump();
+  /* re-rendering after an edit keeps the scroll where it was; a fresh
+     visit lands on this week */
+  if(keep){ wrapEl.scrollTop=keep.t; wrapEl.scrollLeft=keep.l; } else jump();
   v.querySelector('#cal-today').onclick=jump;
+  v.querySelectorAll('[data-edit]').forEach(function(sp){ sp.onclick=function(){ openSlotEditor(+sp.getAttribute('data-edit'),v); }; });
+  var dragSi=null;
+  v.querySelectorAll('tr.secrow').forEach(function(tr){
+    tr.addEventListener('dragstart',function(e){ dragSi=+tr.getAttribute('data-si'); e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain',String(dragSi)); }catch(x){} });
+    tr.addEventListener('dragend',function(){ dragSi=null; v.querySelectorAll('tr.dropto').forEach(function(x){ x.classList.remove('dropto'); }); });
+  });
+  v.querySelectorAll('tr.secrow, tr.grouprow').forEach(function(tr){
+    tr.addEventListener('dragover',function(e){ if(dragSi==null) return; e.preventDefault(); e.dataTransfer.dropEffect='move'; tr.classList.add('dropto'); });
+    tr.addEventListener('dragleave',function(){ tr.classList.remove('dropto'); });
+    tr.addEventListener('drop',function(e){
+      if(dragSi==null) return; e.preventDefault();
+      if(tr.classList.contains('grouprow')) placeSection(dragSi,null,state.groups[+tr.getAttribute('data-group')]);
+      else { var tj=+tr.getAttribute('data-si'); if(tj===dragSi) return; placeSection(dragSi,tj,null); }
+      dragSi=null; markDirty(); renderCalendar(v);
+    });
+  });
   v.querySelector('#cal-extend').onclick=function(){ state.calendar.numWeeks+=8; _weeks=null; resync(); renderCalendar(v); toast('Calendar extended 8 weeks.'); };
   var hb=v.querySelector('#cal-hidden');
   if(hb) hb.onclick=function(){ v.setAttribute('data-hidden',showHidden?'0':'1'); renderCalendar(v); };
@@ -778,19 +836,22 @@ function renderCalendar(v){
       '<div><label>Slot name</label><input id="as-name" placeholder="e.g. Holiday Blend"></div>'+
       '<div><label>Subtitle (optional)</label><input id="as-sub" placeholder="e.g. Seasonal"></div>'+
       '<div><label>Components</label><select id="as-n"><option value="1">Single coffee</option><option value="2">Two components (blend)</option></select></div>'+
+      '<div><label>Group</label>'+groupSelectHTML('as-g',state.groups[1])+'</div>'+
     '</div>';
     openModal('Add slot',body,function(m){
       var name=m.querySelector('#as-name').value.trim();
       if(!name){ toast('Give the slot a name.'); return false; }
       var n=Number(m.querySelector('#as-n').value)||1;
       var rows=n===2?[{name:'Component 1',a:[]},{name:'Component 2',a:[]}]:[{name:'Coffee',a:[]}];
-      state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows});
-      resync(); renderCalendar(v); toast('Slot added at the bottom of the calendar.');
+      state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows,group:m.querySelector('#as-g').value});
+      placeSection(state.sections.length-1,null,m.querySelector('#as-g').value);
+      resync(); renderCalendar(v); toast('Slot added at the end of its group.');
     });
   };
   v.querySelectorAll('[data-move]').forEach(function(b){ b.onclick=function(){
     var si=+b.getAttribute('data-move'), dir=+b.getAttribute('data-dir');
-    var shown=state.sections.map(function(s,idx){return idx;}).filter(function(idx){ return !state.sections[idx].hidden||showHidden; });
+    var g=groupIndexOf(state.sections[si]);
+    var shown=state.sections.map(function(s,idx){return idx;}).filter(function(idx){ return groupIndexOf(state.sections[idx])===g&&(!state.sections[idx].hidden||showHidden); });
     var at=shown.indexOf(si), nb=shown[at+dir];
     if(nb===undefined) return;
     var tmp=state.sections[si]; state.sections[si]=state.sections[nb]; state.sections[nb]=tmp;
@@ -805,6 +866,25 @@ function renderCalendar(v){
     function open(){ openCellEditor(+td.getAttribute('data-s'),+td.getAttribute('data-r'),+td.getAttribute('data-i'),v); }
     td.onclick=open;
     td.onkeydown=function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } };
+  });
+}
+function groupSelectHTML(id,current){
+  return '<select id="'+id+'">'+state.groups.map(function(g){ return '<option value="'+esc(g)+'"'+(g===current?' selected':'')+'>'+esc(g)+'</option>'; }).join('')+'</select>';
+}
+function openSlotEditor(si,v){
+  var sec=state.sections[si];
+  var body='<div class="frm">'+
+    '<div><label>Slot name</label><input id="se-name" value="'+esc(sec.name)+'"></div>'+
+    '<div><label>Subtitle</label><input id="se-sub" value="'+esc(sec.sub||'')+'"></div>'+
+    '<div class="full"><label>Group</label>'+groupSelectHTML('se-g',state.groups[groupIndexOf(sec)])+'</div>'+
+    '<div class="full muted" style="font-size:12px">You can also drag a slot by its name to reorder it or drop it onto another group.</div>'+
+  '</div>';
+  openModal('Edit slot',body,function(m){
+    var name=m.querySelector('#se-name').value.trim(); if(!name){ toast('Give the slot a name.'); return false; }
+    sec.name=name; sec.sub=m.querySelector('#se-sub').value.trim();
+    var g=m.querySelector('#se-g').value;
+    if(g!==sec.group) placeSection(si,null,g);
+    markDirty(); renderCalendar(v);
   });
 }
 function openCellEditor(si,ri,i,v){
@@ -1232,7 +1312,7 @@ function renderSettings(v){
   '<button class="btn ghost" id="st-import">Import backup</button>'+
   '</div></div>'+
   '<h2 class="sec">How this works</h2><div class="card muted" style="font-size:13px">'+
-  '<p style="margin-top:0"><b>Calendar</b>: click any cell and pick a coffee from the position, then fill it forward. Book a coffee under Position first and it shows up in the list; anything typed in by hand shows in italics as manual. Archiving a booking takes it out of the list but leaves every week it was already on. Use the arrows on a slot to reorder. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
+  '<p style="margin-top:0"><b>Calendar</b>: click any cell and pick a coffee from the position, then fill it forward. Book a coffee under Position first and it shows up in the list; anything typed in by hand shows in italics as manual. Archiving a booking takes it out of the list but leaves every week it was already on. Slots sit in three groups; drag a slot by its name to reorder it or move it between groups, or click the name to edit it. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
   '<p><b>Position</b>: book coffees as you contract them. Orders can only be built from coffees in the position. When an order lands, use "Deduct bags from position" on the order so the position stays true.</p>'+
   '<p><b>Runway</b>: every coffee on the calendar for the next 6 weeks shows up on the dashboard by itself, with its weekly usage and minimum worked out from the plan. Enter on-hand lbs from Cropster and the Order column tells you how many bags to buy to land one week of usage above the minimum. Bag sizes come from the position, so book a coffee there to get bags instead of pounds.</p>'+
   '<p><b>Order emails</b>: "Draft emails" on any order writes the PO request, the release email for each importer, and the consolidation email for the annex. Copy, paste into Gmail, send. Nothing sends from this page.</p>'+
