@@ -114,7 +114,7 @@ table.cal{border-collapse:separate;border-spacing:0;font-size:12px}
 table.cal th,table.cal td{border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);padding:6px 8px;min-width:112px;max-width:112px;white-space:normal}
 table.cal thead th{position:sticky;top:0;z-index:3;background:var(--surface);font-weight:normal;text-align:left;font-size:11px;color:var(--ink-soft);border-bottom:1px solid var(--line)}
 table.cal thead th .wk{display:block;color:var(--ink-faint);font-size:10px;letter-spacing:.5px}
-table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);min-width:190px;max-width:190px;border-right:1px solid var(--line);font-size:12.5px}
+table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);min-width:240px;max-width:240px;border-right:1px solid var(--line);font-size:12.5px}
 table.cal thead .rowlabel{z-index:4}
 table.cal .rowlabel .comp{color:var(--ink-soft)}
 table.cal tr.secrow td{background:var(--cream);border-bottom:1px solid var(--line)}
@@ -127,6 +127,9 @@ table.cal td.cell.empty{color:var(--ink-faint)}
 table.cal td.cell.switch{background:var(--blush);color:var(--rose-deep)}
 table.cal td.cell.cur,table.cal th.cur{background:var(--cur-col)}
 table.cal td.cell.cur.switch{background:var(--blush)}
+table.cal td.cell.manual{font-style:italic}
+table.cal td.cell .mtag{display:block;font-size:9px;letter-spacing:.7px;text-transform:uppercase;color:var(--ink-faint);font-style:normal;margin-top:2px}
+.secbtn{padding:1px 6px !important;font-size:10.5px !important;line-height:1.4}
 table.cal th.cur{color:var(--ink)}
 .legend{display:flex;gap:16px;align-items:center;font-size:12px;color:var(--ink-soft);flex-wrap:wrap}
 .legend .sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:5px;border:1px solid var(--line)}
@@ -232,9 +235,14 @@ function curWeekIdxOf(s){
 }
 function syncInventory(s){
   s.inventory=s.inventory||[];
+  s.position=s.position||[];
+  s.position.forEach(function(p){ if(!p.id) p.id=uid(); });
   var counts={};
   s.sections.forEach(function(sec){ if(sec.usageKey&&!sec.hidden) counts[sec.usageKey]=(counts[sec.usageKey]||0)+sec.rows.length; });
   function catVal(list,key){ var m=(list||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
+  var cache={};
+  function keyOf(name){ var k=invKey(name); if(cache[k]===undefined){ var p=resolvePosition(name,s.position); cache[k]=p?'pos:'+p.id:'manual:'+k; } return cache[k]; }
+  function labelOf(name){ var p=resolvePosition(name,s.position); return p?canonLabel(p):String(name).trim(); }
   var cur=curWeekIdxOf(s);
   var last=Math.min(s.calendar.numWeeks-1,cur+INV_WINDOW-1);
   var seen={};
@@ -247,8 +255,8 @@ function syncInventory(s){
       var mShare=sec.usageKey?catVal(s.minimums,sec.usageKey)/n:0;
       sec.rows.forEach(function(r){
         splitCell((r.a||[])[i]).forEach(function(name){
-          var k=invKey(name);
-          if(!seen[k]) seen[k]={name:name,usage:0,min:0};
+          var k=keyOf(name);
+          if(!seen[k]) seen[k]={name:labelOf(name),usage:0,min:0};
           wkUse[k]=(wkUse[k]||0)+uShare;
           wkMin[k]=(wkMin[k]||0)+mShare;
         });
@@ -259,8 +267,18 @@ function syncInventory(s){
       if(wkMin[k]>seen[k].min) seen[k].min=wkMin[k];
     });
   }
+  /* two runway rows that are really the same coffee ("Palmera" and
+     "Palmera - Colombia") collapse into one, keeping the better row */
   var changed=false, byKey={};
-  s.inventory.forEach(function(it){ byKey[invKey(it.coffee)]=it; });
+  function score(it){ return (it.archived?0:8)+(it.custom?4:0)+((it.onHand!=null&&it.onHand!=='')?2:0); }
+  s.inventory.forEach(function(it){
+    var k=keyOf(it.coffee), prev=byKey[k];
+    if(!prev){ byKey[k]=it; return; }
+    var keep=prev, drop=it;
+    if(score(it)>score(prev)||(score(it)===score(prev)&&(it.updated||'')>(prev.updated||''))){ keep=it; drop=prev; }
+    byKey[k]=keep; drop._drop=true; changed=true;
+  });
+  s.inventory=s.inventory.filter(function(it){ return !it._drop; });
   Object.keys(seen).forEach(function(k){
     var want=seen[k], it=byKey[k];
     var u=Math.round(want.usage||0), m=Math.round(want.min||0);
@@ -268,17 +286,19 @@ function syncInventory(s){
       s.inventory.push({id:uid(),coffee:want.name,usageLbs:u,minLbs:m,onHand:null,updated:null,auto:true});
       changed=true; return;
     }
+    if(k.indexOf('pos:')===0&&it.coffee!==want.name){ it.coffee=want.name; changed=true; }
     if(!it.custom&&(it.usageLbs!==u||it.minLbs!==m)){ it.usageLbs=u; it.minLbs=m; changed=true; }
   });
   var before=s.inventory.length;
   s.inventory=s.inventory.filter(function(it){
     if(it.archived||it.custom||!it.auto) return true;
-    if(seen[invKey(it.coffee)]) return true;
+    if(seen[keyOf(it.coffee)]) return true;
     return it.onHand!=null&&it.onHand!=='';
   });
   if(s.inventory.length!==before) changed=true;
   return changed;
 }
+
 /* ---------- utils ---------- */
 function esc(x){ return String(x==null?'':x).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 function money(n){ return '$'+(Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -305,14 +325,49 @@ function curWeekIdx(){
   for(var i=0;i<w.length;i++){ var end=new Date(w[i].start); end.setDate(end.getDate()+6); if(t>=w[i].start&&t<=end) return i; }
   return t<w[0].start?0:w.length-1;
 }
+/* ---------- coffee identity ----------
+   Calendar cells and order lines hold plain text, but the position tab is
+   the source of truth for what a coffee is. resolvePosition() maps a typed
+   name to its booking (archived ones too, so old weeks keep their identity)
+   and resolveKey() gives every name a stable key: the booking's id, or a
+   "manual" key for anything that is not in the position. */
+function canonLabel(p){
+  if(!p.origin) return p.coffee;
+  if(invKey(p.coffee).indexOf(invKey(p.origin))>-1) return p.coffee;
+  return p.coffee+' - '+p.origin;
+}
+function resolvePosition(str,positions){
+  var name=invKey(str); if(!name) return null;
+  var base=name.split(' - ')[0].trim();
+  var pool=(positions||state.position).slice().sort(function(a,b){ return (a.archived?1:0)-(b.archived?1:0); });
+  function first(list){ return list.length?list[0]:null; }
+  /* fuzzy rules only count when they point at one coffee */
+  function unique(list){ var ids={}; list.forEach(function(p){ ids[invKey(p.coffee)+'|'+invKey(p.origin)]=1; }); return Object.keys(ids).length===1?list[0]:null; }
+  var hit=first(pool.filter(function(p){ return invKey(canonLabel(p))===name||invKey(p.coffee)===name||invKey(p.coffee+' - '+p.origin)===name; }));
+  if(!hit) hit=unique(pool.filter(function(p){ return invKey(p.coffee).split(' - ')[0].trim()===base; }));
+  if(!hit) hit=unique(pool.filter(function(p){ var pk=invKey(p.coffee).split(' - ')[0].trim(); return pk&&base&&(pk.indexOf(base)===0||base.indexOf(pk)===0); }));
+  if(!hit){ var w0=base.split(' ')[0]; if(w0) hit=unique(pool.filter(function(p){ var o=invKey(p.origin); return invKey(p.coffee).split(' ')[0]===w0&&o&&name.indexOf(o)>-1; })); }
+  return hit||null;
+}
+var _rk={};
+function resolveKey(str){
+  var k=invKey(str); if(!k) return '';
+  if(_rk[k]!==undefined) return _rk[k];
+  var p=resolvePosition(str);
+  return (_rk[k]=p?'pos:'+p.id:'manual:'+k);
+}
+function isManualName(str){ return !!invKey(str)&&resolveKey(str).indexOf('manual:')===0; }
+function activePositions(){
+  return state.position.filter(function(p){ return !p.archived; }).slice()
+    .sort(function(a,b){ return canonLabel(a).localeCompare(canonLabel(b)); });
+}
 function cellVal(row,i){ return (row.a[i]||'').trim(); }
-function isSwitch(row,i){ var v=cellVal(row,i); if(!v) return false; if(v.indexOf('/')>-1) return true; if(i===0) return false; var p=cellVal(row,i-1); return p!=='' && p.toLowerCase()!==v.toLowerCase(); }
+function isSwitch(row,i){ var v=cellVal(row,i); if(!v) return false; if(v.indexOf('/')>-1) return true; if(i===0) return false; var p=cellVal(row,i-1); return p!=='' && resolveKey(p)!==resolveKey(v); }
 function usageOf(key){ var u=(state.usage||[]).filter(function(x){return x.key===key;})[0]; return u?Number(u.lbs)||0:0; }
 function minOf(key){ var m=(state.minimums||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
 function coffeeNames(){
   var names={};
-  state.position.forEach(function(p){ if(!p.archived){ names[p.coffee+(p.origin?' - '+p.origin:'')]=1; names[p.coffee]=1; } });
-  state.sections.forEach(function(s){ s.rows.forEach(function(r){ r.a.forEach(function(v){ if(v) names[v]=1; }); }); });
+  activePositions().forEach(function(p){ names[canonLabel(p)]=1; });
   return Object.keys(names).sort();
 }
 
@@ -326,6 +381,7 @@ function coffeeNames(){
 function resync(){ syncInventory(state); markDirty(); }
 function markDirty(){
   if(!state) return;
+  _rk={};
   dirty=true; renderSyncStatus('pending');
   clearTimeout(saveTimer);
   saveTimer=setTimeout(save,1200);
@@ -511,14 +567,14 @@ function invStatus(it){
   return {cls:'inv-good',rank:3,chip:'<span class="chip good">Covered</span>',cover:cover};
 }
 function usedInSlots(coffee){
-  var cur=curWeekIdx(), w=weeks(), key=invKey(coffee), hits=[], soon=null;
+  var cur=curWeekIdx(), w=weeks(), key=resolveKey(coffee), hits=[], soon=null;
   if(!key) return {now:hits,soonWeek:null};
   var last=Math.min(w.length-1,cur+INV_WINDOW-1);
   for(var i=cur;i<=last;i++){
     state.sections.forEach(function(sec){
       if(sec.hidden) return;
       sec.rows.forEach(function(r){
-        if(splitCell(cellVal(r,i)).map(invKey).indexOf(key)<0) return;
+        if(splitCell(cellVal(r,i)).map(resolveKey).indexOf(key)<0) return;
         var label=sec.name+(sec.rows.length>1?' '+r.name:'');
         if(i===cur){ if(hits.indexOf(label)<0) hits.push(label); }
         else if(soon===null) soon=i;
@@ -527,26 +583,10 @@ function usedInSlots(coffee){
   }
   return {now:hits,soonWeek:soon};
 }
-/* Find the booked position entry for a coffee, so we know its bag size.
-   Calendar names carry the origin ("Acacia G2 - Ethiopia") while position
-   splits it out, so fall back to matching on the name before the dash. */
+/* The booking behind a coffee, for its bag size and importer. */
 function positionFor(coffee){
-  var name=invKey(coffee), base=name.split(' - ')[0].trim();
-  var pool=state.position.filter(function(p){ return !p.archived&&Number(p.bagWeight)>0; });
-  var hit=pool.filter(function(p){ return invKey(p.coffee)===name; })[0];
-  if(!hit) hit=pool.filter(function(p){ return invKey(p.coffee+(p.origin?' - '+p.origin:''))===name; })[0];
-  if(!hit) hit=pool.filter(function(p){ return invKey(p.coffee).split(' - ')[0].trim()===base; })[0];
-  if(!hit) hit=pool.filter(function(p){ var pk=invKey(p.coffee).split(' - ')[0].trim(); return pk&&base&&(pk.indexOf(base)===0||base.indexOf(pk)===0); })[0];
-  /* last resort: same first word and the origin shows up in the calendar name,
-     which is how "SWP Honduras" on the calendar finds "SWP Decaf" from Honduras */
-  if(!hit){
-    var w0=base.split(' ')[0];
-    if(w0) hit=pool.filter(function(p){
-      var o=invKey(p.origin);
-      return invKey(p.coffee).split(' ')[0]===w0&&o&&name.indexOf(o)>-1;
-    })[0];
-  }
-  return hit||null;
+  var p=resolvePosition(coffee);
+  return (p&&Number(p.bagWeight)>0)?p:null;
 }
 /* How much to order: enough to land one week of usage above the minimum. */
 function orderAdvice(it){
@@ -682,6 +722,7 @@ function renderCalendar(v){
   var html='<div class="toolbar"><div class="legend">'+
     '<span><span class="sw" style="background:var(--blush)"></span>Coffee switch week</span>'+
     '<span><span class="sw" style="background:var(--cur-col)"></span>Current week</span>'+
+    '<span><i>Italic</i> = manual, not in the position</span>'+
     '<span class="muted">Click any cell to set a coffee.</span></div>'+
     '<div class="spacer"></div>'+
     '<button class="btn ghost small" id="cal-today">Jump to this week</button>'+
@@ -694,17 +735,21 @@ function renderCalendar(v){
   state.sections.forEach(function(sec,si){
     if(sec.hidden&&!showHidden) return;
     var use=sec.usageKey?usageOf(sec.usageKey)+' lbs/wk':'';
-    html+='<tr class="secrow"><td class="rowlabel"><div style="display:flex;align-items:center;gap:8px">'+
-      '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis">'+esc(sec.name)+(sec.sub?'<span class="sub">'+esc(sec.sub)+'</span>':'')+'</span>'+
+    html+='<tr class="secrow"><td class="rowlabel"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px">'+
+      '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sec.name)+(sec.sub?'<span class="sub">'+esc(sec.sub)+'</span>':'')+'</span>'+
       (sec.hidden?'<span class="chip plain">Hidden</span>':'')+
-      '<button class="btn ghost small" data-hide="'+si+'" style="margin-left:auto;padding:1px 7px;font-size:10.5px" title="'+(sec.hidden?'Unhide this slot':'Hide this slot, keeping its history')+'">'+(sec.hidden?'Unhide':'Hide')+'</button>'+
+      '<span style="white-space:nowrap">'+
+      '<button class="btn ghost small secbtn" data-move="'+si+'" data-dir="-1" title="Move this slot up">&uarr;</button> '+
+      '<button class="btn ghost small secbtn" data-move="'+si+'" data-dir="1" title="Move this slot down">&darr;</button> '+
+      '<button class="btn ghost small secbtn" data-hide="'+si+'" title="'+(sec.hidden?'Unhide this slot':'Hide this slot, keeping its history')+'">'+(sec.hidden?'Unhide':'Hide')+'</button></span>'+
       '</div></td><td colspan="'+w.length+'"><span class="use" style="float:left">'+esc(use)+'</span></td></tr>';
     sec.rows.forEach(function(r,ri){
       html+='<tr><td class="rowlabel"><span class="comp">'+esc(r.name)+'</span></td>';
       for(var i=0;i<w.length;i++){
         var val=cellVal(r,i);
-        var cls='cell'+(val?'':' empty')+(isSwitch(r,i)?' switch':'')+(i===cur?' cur':'');
-        html+='<td class="'+cls+'" data-s="'+si+'" data-r="'+ri+'" data-i="'+i+'" tabindex="0">'+(val?esc(val):'&middot;')+'</td>';
+        var manual=!!val&&isManualName(val);
+        var cls='cell'+(val?'':' empty')+(isSwitch(r,i)?' switch':'')+(i===cur?' cur':'')+(manual?' manual':'');
+        html+='<td class="'+cls+'" data-s="'+si+'" data-r="'+ri+'" data-i="'+i+'" tabindex="0">'+(val?esc(val)+(manual?'<span class="mtag">manual</span>':''):'&middot;')+'</td>';
       }
       html+='</tr>';
     });
@@ -712,7 +757,17 @@ function renderCalendar(v){
   html+='</tbody></table></div>';
   v.innerHTML=html;
   var wrapEl=v.querySelector('.cal-wrap');
-  function jump(){ var c=v.querySelector('th.cur'); if(c) wrapEl.scrollLeft=Math.max(0,c.offsetLeft-260); }
+  /* land with one past week showing, so the current week is the second
+     column after the sticky label */
+  function jump(){
+    var c=v.querySelector('th.cur'); if(!c) return;
+    var label=v.querySelector('thead th.rowlabel'), prev=c.previousElementSibling;
+    var wr=wrapEl.getBoundingClientRect(), cr=c.getBoundingClientRect();
+    var labelW=label?label.getBoundingClientRect().width:0;
+    var prevW=(prev&&prev!==label)?prev.getBoundingClientRect().width:0;
+    var contentX=cr.left-wr.left+wrapEl.scrollLeft;
+    wrapEl.scrollLeft=Math.max(0,Math.round(contentX-labelW-prevW));
+  }
   jump();
   v.querySelector('#cal-today').onclick=jump;
   v.querySelector('#cal-extend').onclick=function(){ state.calendar.numWeeks+=8; _weeks=null; resync(); renderCalendar(v); toast('Calendar extended 8 weeks.'); };
@@ -733,6 +788,14 @@ function renderCalendar(v){
       resync(); renderCalendar(v); toast('Slot added at the bottom of the calendar.');
     });
   };
+  v.querySelectorAll('[data-move]').forEach(function(b){ b.onclick=function(){
+    var si=+b.getAttribute('data-move'), dir=+b.getAttribute('data-dir');
+    var shown=state.sections.map(function(s,idx){return idx;}).filter(function(idx){ return !state.sections[idx].hidden||showHidden; });
+    var at=shown.indexOf(si), nb=shown[at+dir];
+    if(nb===undefined) return;
+    var tmp=state.sections[si]; state.sections[si]=state.sections[nb]; state.sections[nb]=tmp;
+    markDirty(); renderCalendar(v);
+  }; });
   v.querySelectorAll('[data-hide]').forEach(function(b){ b.onclick=function(){
     var sec=state.sections[+b.getAttribute('data-hide')];
     sec.hidden=!sec.hidden; resync(); renderCalendar(v);
@@ -746,18 +809,36 @@ function renderCalendar(v){
 }
 function openCellEditor(si,ri,i,v){
   var sec=state.sections[si], row=sec.rows[ri], w=weeks();
+  var curVal=cellVal(row,i), curP=curVal?resolvePosition(curVal):null;
+  var manualSel=!!curVal&&!curP, found=false;
+  var selHtml='<select id="ce-sel"><option value="">Choose a coffee from the position</option>';
+  activePositions().forEach(function(p){
+    var L=canonLabel(p), on=!!(curP&&p.id===curP.id); if(on) found=true;
+    selHtml+='<option value="'+esc(L)+'"'+(on?' selected':'')+'>'+esc(L)+'</option>';
+  });
+  if(curP&&!found) selHtml+='<option value="'+esc(canonLabel(curP))+'" selected>'+esc(canonLabel(curP))+' (archived)</option>';
+  selHtml+='<option value="__manual"'+(manualSel?' selected':'')+'>Something not in the position (manual)</option></select>';
   var body='<div class="frm">'+
-    '<div class="full"><label>Coffee</label><input id="ce-val" list="ce-dl" value="'+esc(cellVal(row,i))+'" placeholder="e.g. Palmera - Colombia">'+datalistHTML('ce-dl')+'</div>'+
+    '<div class="full"><label>Coffee</label>'+selHtml+'</div>'+
+    '<div class="full" id="ce-manual-wrap"'+(manualSel?'':' hidden')+'><label>Manual coffee name</label><input id="ce-val" value="'+esc(manualSel?curVal:'')+'" placeholder="Type the coffee">'+
+    '<div class="muted" style="font-size:12px;margin-top:4px">Shows in italics on the calendar. Book it under Position to make it official.</div></div>'+
     '<div><label>Fill forward (weeks)</label><input id="ce-n" type="number" min="1" max="'+(w.length-i)+'" value="1"></div>'+
     '<div style="align-self:end"><button class="btn ghost" id="ce-clear">Clear these weeks</button></div>'+
     '<div class="full muted" style="font-size:12px">'+esc(sec.name)+' &middot; '+esc(row.name)+' &middot; starting week of '+esc(fmtMD(w[i].start))+'. Fill forward writes the same coffee into the next weeks, like dragging in the sheet.</div>'+
   '</div>';
   var bg=openModal('Set coffee',body,function(m){
-    var val=m.querySelector('#ce-val').value.trim();
+    var sel=m.querySelector('#ce-sel').value, val;
+    if(sel==='__manual'){ val=m.querySelector('#ce-val').value.trim(); if(!val){ toast('Type the coffee name, or pick one from the position.'); return false; } }
+    else val=sel;
+    if(!val){ toast('Pick a coffee, or choose manual.'); return false; }
     var n=Math.max(1,Math.min(w.length-i,Number(m.querySelector('#ce-n').value)||1));
     for(var k=i;k<i+n;k++) row.a[k]=val;
     resync(); renderCalendar(v);
   });
+  bg.querySelector('#ce-sel').onchange=function(){
+    var wrap=bg.querySelector('#ce-manual-wrap'); wrap.hidden=this.value!=='__manual';
+    if(!wrap.hidden) bg.querySelector('#ce-val').focus();
+  };
   bg.querySelector('#ce-clear').onclick=function(){
     var n=Math.max(1,Number(bg.querySelector('#ce-n').value)||1);
     for(var k=i;k<Math.min(weeks().length,i+n);k++) row.a[k]='';
@@ -906,11 +987,21 @@ function renderOrders(v){
     toast('Deducted: '+(hits.join(', ')||'none')+(misses.length?'. Not found in position: '+misses.join(', '):''));
   }; });
 }
+function coffeeSelectHTML(cur){
+  var curP=cur?resolvePosition(cur):null, matched=false;
+  var h='<select class="l-coffee" style="min-width:200px"><option value="">Choose from position</option>';
+  activePositions().forEach(function(p){
+    var on=!!(curP&&p.id===curP.id); if(on) matched=true;
+    h+='<option value="'+esc(p.id)+'"'+(on?' selected':'')+'>'+esc(canonLabel(p))+'</option>';
+  });
+  if(cur&&!matched) h+='<option value="__keep" selected>'+esc(cur)+(curP?' (archived)':' (not in position)')+'</option>';
+  return h+'</select><input type="hidden" class="l-name" value="'+esc(cur)+'">';
+}
 function lineRowHTML(l,kind){
   l=l||{};
   return '<tr data-kind="'+kind+'">'+
     '<td><input type="number" class="l-bags" min="0" step="1" value="'+esc(l.bags!=null?l.bags:'')+'" style="width:70px"></td>'+
-    '<td><input class="l-coffee" list="oe-dl" value="'+esc(l.coffee||'')+'" style="min-width:180px"></td>'+
+    '<td>'+coffeeSelectHTML(l.coffee||'')+'</td>'+
     '<td><input class="l-origin" value="'+esc(l.origin||'')+'" style="width:110px"></td>'+
     '<td><input type="number" class="l-price" min="0" step="0.01" value="'+esc(l.price!=null?l.price:'')+'" style="width:85px"></td>'+
     '<td><input type="number" class="l-bw" min="0" step="0.001" value="'+esc(l.bagWeight!=null?l.bagWeight:'')+'" style="width:95px"></td>'+
@@ -925,7 +1016,6 @@ function openOrderEditor(id,v){
     '<div><label>Date</label><input id="oe-date" type="date" value="'+esc(o.date||'')+'"></div>'+
     '<div><label>Status</label><select id="oe-status"><option value="draft"'+(o.status==='draft'?' selected':'')+'>Draft</option><option value="ordered"'+(o.status==='ordered'?' selected':'')+'>Ordered</option><option value="transferred"'+(o.status==='transferred'?' selected':'')+'>In Cropster</option></select></div>'+
     '<div class="full"><label>Note</label><input id="oe-note" value="'+esc(o.note||'')+'"></div></div>'+
-    datalistHTML('oe-dl')+
     '<label style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-faint)">Pallet pickup</label>'+
     '<div class="tblwrap"><table class="data" id="oe-lines"><thead><tr><th>Bags</th><th>Coffee</th><th>Origin</th><th>$/lb</th><th>Bag wt</th><th>Importer</th><th class="r">Total</th><th></th></tr></thead><tbody></tbody></table></div>'+
     '<button class="btn ghost small" id="oe-addline" style="margin:6px 0 14px">Add pickup line</button>'+
@@ -947,7 +1037,7 @@ function openOrderEditor(id,v){
   function readLines(tb){
     var out=[];
     tb.querySelectorAll('tr').forEach(function(tr){
-      var coffee=tr.querySelector('.l-coffee').value.trim();
+      var coffee=tr.querySelector('.l-name').value.trim();
       var bagsV=tr.querySelector('.l-bags').value;
       if(!coffee&&!bagsV) return;
       out.push({bags:Number(bagsV)||0,coffee:coffee,origin:tr.querySelector('.l-origin').value.trim(),price:Number(tr.querySelector('.l-price').value)||0,bagWeight:Number(tr.querySelector('.l-bw').value)||0,importer:tr.querySelector('.l-imp').value.trim()});
@@ -970,14 +1060,16 @@ function openOrderEditor(id,v){
   function wireRow(tr){
     tr.querySelector('.l-del').onclick=function(){ tr.remove(); totals(); };
     tr.querySelector('.l-coffee').addEventListener('change',function(){
-      var name=this.value.trim().toLowerCase();
-      var p=state.position.filter(function(x){ if(x.archived) return false; var full=(x.coffee+(x.origin?' - '+x.origin:'')).toLowerCase(); return x.coffee.toLowerCase()===name||full===name; })[0];
+      var id=this.value;
+      if(id===''){ tr.querySelector('.l-name').value=''; totals(); return; }
+      if(id==='__keep'){ totals(); return; }
+      var p=state.position.filter(function(x){return x.id===id;})[0];
       if(p){
-        tr.querySelector('.l-coffee').value=p.coffee;
-        if(!tr.querySelector('.l-origin').value) tr.querySelector('.l-origin').value=p.origin||'';
-        if(!tr.querySelector('.l-price').value) tr.querySelector('.l-price').value=p.price;
-        if(!tr.querySelector('.l-bw').value) tr.querySelector('.l-bw').value=p.bagWeight;
-        if(!tr.querySelector('.l-imp').value) tr.querySelector('.l-imp').value=p.importer||'';
+        tr.querySelector('.l-name').value=p.coffee;
+        tr.querySelector('.l-origin').value=p.origin||'';
+        tr.querySelector('.l-price').value=p.price;
+        tr.querySelector('.l-bw').value=p.bagWeight;
+        tr.querySelector('.l-imp').value=p.importer||'';
       }
       totals();
     });
@@ -1140,8 +1232,8 @@ function renderSettings(v){
   '<button class="btn ghost" id="st-import">Import backup</button>'+
   '</div></div>'+
   '<h2 class="sec">How this works</h2><div class="card muted" style="font-size:13px">'+
-  '<p style="margin-top:0"><b>Calendar</b>: click any cell to set a coffee and fill it forward. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
-  '<p><b>Position</b>: book coffees as you contract them. When an order lands, use "Deduct bags from position" on the order so the position stays true.</p>'+
+  '<p style="margin-top:0"><b>Calendar</b>: click any cell and pick a coffee from the position, then fill it forward. Book a coffee under Position first and it shows up in the list; anything typed in by hand shows in italics as manual. Archiving a booking takes it out of the list but leaves every week it was already on. Use the arrows on a slot to reorder. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
+  '<p><b>Position</b>: book coffees as you contract them. Orders can only be built from coffees in the position. When an order lands, use "Deduct bags from position" on the order so the position stays true.</p>'+
   '<p><b>Runway</b>: every coffee on the calendar for the next 6 weeks shows up on the dashboard by itself, with its weekly usage and minimum worked out from the plan. Enter on-hand lbs from Cropster and the Order column tells you how many bags to buy to land one week of usage above the minimum. Bag sizes come from the position, so book a coffee there to get bags instead of pounds.</p>'+
   '<p><b>Order emails</b>: "Draft emails" on any order writes the PO request, the release email for each importer, and the consolidation email for the annex. Copy, paste into Gmail, send. Nothing sends from this page.</p>'+
   '<p style="margin-bottom:0"><b>Saving</b>: automatic. Every edit saves within a couple seconds and shows up live for everyone with the app open. The header shows who saved last.</p>'+
@@ -1203,6 +1295,7 @@ function renderTeamCard(card,emails){
 
 /* ---------- router ---------- */
 function render(){
+  _rk={};
   if(!user){ renderSignIn(); return; }
   if(noAccess){ renderNoAccess(); return; }
   if(!state) return;
