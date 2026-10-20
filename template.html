@@ -109,8 +109,9 @@ table.cal thead th .wk{display:block;color:var(--ink-faint);font-size:10px;lette
 table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);min-width:240px;max-width:240px;border-right:1px solid var(--line);font-size:12.5px}
 table.cal thead .rowlabel{z-index:4}
 table.cal .rowlabel .comp{color:var(--ink-soft)}
-table.cal tr.grouprow td{background:var(--line-soft);border-top:2px solid var(--ink);border-bottom:1px solid var(--line);padding-top:9px;padding-bottom:9px}
-table.cal tr.grouprow td.rowlabel{background:var(--line-soft);font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);white-space:normal;line-height:1.3}
+table.cal tr.grouprow td{background:var(--ink);border-right:none;border-bottom:none;padding:13px 12px 11px}
+table.cal tr.grouprow td.rowlabel{background:var(--ink);color:var(--bg);font-family:var(--font-display);letter-spacing:3.5px;text-transform:uppercase;font-size:14px;white-space:normal;line-height:1.25;border-right:none}
+table.cal tr.grouprow + tr.secrow td{border-top:none}
 table.cal tr.grouprow td.rowlabel .gcount{font-family:var(--font-body);letter-spacing:.3px;text-transform:none;color:var(--ink-faint);font-size:11px;margin-left:8px}
 table.cal tr.secrow td.rowlabel .nm{cursor:grab}
 table.cal tr.secrow td.rowlabel .nm:hover{text-decoration:underline dotted}
@@ -768,8 +769,6 @@ function renderCalendar(v){
       '<span class="nm" data-edit="'+si+'" title="Edit this slot, or drag it to a new spot" style="min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sec.name)+(sec.sub?'<span class="sub">'+esc(sec.sub)+'</span>':'')+'</span>'+
       (sec.hidden?'<span class="chip plain">Hidden</span>':'')+
       '<span style="white-space:nowrap">'+
-      '<button class="btn ghost small secbtn" data-move="'+si+'" data-dir="-1" title="Move this slot up">&uarr;</button> '+
-      '<button class="btn ghost small secbtn" data-move="'+si+'" data-dir="1" title="Move this slot down">&darr;</button> '+
       '<button class="btn ghost small secbtn" data-hide="'+si+'" title="'+(sec.hidden?'Unhide this slot':'Hide this slot, keeping its history')+'">'+(sec.hidden?'Unhide':'Hide')+'</button></span>'+
       '</div></td><td colspan="'+w.length+'"><span class="use" style="float:left">'+esc(use)+'</span></td></tr>';
     sec.rows.forEach(function(r,ri){
@@ -840,15 +839,6 @@ function renderCalendar(v){
       resync(); renderCalendar(v); toast('Slot added at the end of its group.');
     });
   };
-  v.querySelectorAll('[data-move]').forEach(function(b){ b.onclick=function(){
-    var si=+b.getAttribute('data-move'), dir=+b.getAttribute('data-dir');
-    var g=groupIndexOf(state.sections[si]);
-    var shown=state.sections.map(function(s,idx){return idx;}).filter(function(idx){ return groupIndexOf(state.sections[idx])===g&&(!state.sections[idx].hidden||showHidden); });
-    var at=shown.indexOf(si), nb=shown[at+dir];
-    if(nb===undefined) return;
-    var tmp=state.sections[si]; state.sections[si]=state.sections[nb]; state.sections[nb]=tmp;
-    markDirty(); renderCalendar(v);
-  }; });
   v.querySelectorAll('[data-hide]').forEach(function(b){ b.onclick=function(){
     var sec=state.sections[+b.getAttribute('data-hide')];
     sec.hidden=!sec.hidden; resync(); renderCalendar(v);
