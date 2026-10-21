@@ -135,6 +135,12 @@ table.cal td.cell.switch{background:var(--blush);color:var(--rose-deep)}
 table.cal td.cell.cur,table.cal th.cur{background:var(--cur-col)}
 table.cal td.cell.cur.switch{background:var(--blush)}
 table.cal td.cell.manual{font-style:italic}
+table.cal td.cell.ghost{color:var(--ink-faint);background-image:repeating-linear-gradient(135deg,transparent 0 5px,var(--line) 5px 6px)}
+table.cal td.cell.ghost.cur{background-color:var(--cur-col)}
+table.cal td.cell .ptag{display:block;font-size:9px;letter-spacing:.7px;text-transform:uppercase;color:var(--rose-deep);font-style:normal;margin-top:2px}
+table.cal td.cell .ptag.spare{color:var(--good)}
+.projbox{background:var(--cream);border-radius:10px;padding:12px 14px;font-size:13px}
+.projbox b.num{font-variant-numeric:tabular-nums}
 table.cal td.cell .mtag{display:block;font-size:9px;letter-spacing:.7px;text-transform:uppercase;color:var(--ink-faint);font-style:normal;margin-top:2px}
 .secbtn{padding:1px 6px !important;font-size:10.5px !important;line-height:1.4}
 table.cal th.cur{color:var(--ink)}
@@ -403,6 +409,62 @@ function activePositions(){
     .sort(function(a,b){ return canonLabel(a).localeCompare(canonLabel(b)); });
 }
 function cellVal(row,i){ return (row.a[i]||'').trim(); }
+/* ---------- supply projection ----------
+   How long a coffee lasts: on hand (runway count) plus what is still booked
+   in the position, divided by what every slot holding it burns per week.
+   Weeks are rounded down. Counted from this week, or from the run's start
+   if it has not started yet. */
+function supplyFor(key){
+  var oh=null, booked=0;
+  state.inventory.forEach(function(it){ if(!it.archived&&it.onHand!=null&&it.onHand!==''&&resolveKey(it.coffee)===key) oh=(oh||0)+Number(it.onHand); });
+  state.position.forEach(function(p){ if(!p.archived&&('pos:'+p.id)===key) booked+=(Number(p.bags)||0)*(Number(p.bagWeight)||0); });
+  return {onHand:oh,booked:booked,supply:oh==null?null:oh+booked};
+}
+function burnFor(key,week){
+  var b=0;
+  state.sections.forEach(function(sec){
+    if(sec.hidden) return;
+    var share=(Number(sec.usageLbs)||0)/(sec.rows.length||1);
+    sec.rows.forEach(function(r){ if(splitCell(cellVal(r,week)).map(resolveKey).indexOf(key)>-1) b+=share; });
+  });
+  return b;
+}
+function runBounds(row,i){
+  var key=resolveKey(cellVal(row,i)); if(!key) return null;
+  var a=i,b=i,n=weeks().length;
+  while(a>0&&resolveKey(cellVal(row,a-1))===key) a--;
+  while(b<n-1&&resolveKey(cellVal(row,b+1))===key) b++;
+  return {key:key,start:a,end:b};
+}
+function projectRun(row,i){
+  var rb=runBounds(row,i); if(!rb||rb.key.indexOf('pos:')!==0) return null;
+  var cur=curWeekIdx(); if(rb.end<cur) return null;
+  var from=Math.max(rb.start,cur), sup=supplyFor(rb.key);
+  if(sup.supply==null) return {run:rb,from:from,supply:sup,unknown:true};
+  var burn=burnFor(rb.key,from);
+  if(!burn) return {run:rb,from:from,supply:sup,noBurn:true};
+  var wk=Math.floor(sup.supply/burn);
+  return {run:rb,from:from,supply:sup,burn:burn,weeks:wk,exact:sup.supply/burn,endExcl:from+wk};
+}
+/* write the coffee through its projected weeks in every slot that holds it,
+   and clear the planned weeks past that. Never touches a different coffee. */
+function fitRun(row,i){
+  var p=projectRun(row,i); if(!p||p.weeks==null) return 0;
+  var key=p.run.key, label=cellVal(row,i), n=weeks().length, changed=0, endExcl=p.from+p.weeks;
+  state.sections.forEach(function(sec){
+    if(sec.hidden) return;
+    sec.rows.forEach(function(r){
+      if(resolveKey(cellVal(r,p.from))!==key) return;
+      var rb=runBounds(r,p.from);
+      for(var k=rb.start;k<n;k++){
+        var v=cellVal(r,k), vk=resolveKey(v);
+        if(k<endExcl){ if(!v){ r.a[k]=label; changed++; } else if(vk!==key) break; }
+        else { if(vk===key){ r.a[k]=''; changed++; } else break; }
+      }
+    });
+  });
+  return changed;
+}
 function isSwitch(row,i){ var v=cellVal(row,i); if(!v) return false; if(v.indexOf('/')>-1) return true; if(i===0) return false; var p=cellVal(row,i-1); return p!=='' && resolveKey(p)!==resolveKey(v); }
 function usageOf(key){ var u=(state.usage||[]).filter(function(x){return x.key===key;})[0]; return u?Number(u.lbs)||0:0; }
 function minOf(key){ var m=(state.minimums||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
@@ -764,6 +826,7 @@ function renderCalendar(v){
     '<span><span class="sw" style="background:var(--blush)"></span>Coffee switch week</span>'+
     '<span><span class="sw" style="background:var(--cur-col)"></span>Current week</span>'+
     '<span><i>Italic</i> = manual, not in the position</span>'+
+    '<span><span class="sw" style="background-image:repeating-linear-gradient(135deg,transparent 0 3px,var(--ink-faint) 3px 4px)"></span>Planned past projected supply</span>'+
     '<span class="muted">Click any cell to set a coffee.</span></div>'+
     '<div class="spacer"></div>'+
     '<button class="btn ghost small" id="cal-today">Jump to this week</button>'+
@@ -789,11 +852,17 @@ function renderCalendar(v){
       '</div></td><td colspan="'+w.length+'"><span class="use" style="float:left">'+esc(use)+'</span></td></tr>';
     sec.rows.forEach(function(r,ri){
       html+='<tr><td class="rowlabel"><span class="comp">'+esc(r.name)+'</span></td>';
+      var proj=null, projEnd=-1;
       for(var i=0;i<w.length;i++){
         var val=cellVal(r,i);
         var manual=!!val&&isManualName(val);
-        var cls='cell'+(val?'':' empty')+(isSwitch(r,i)?' switch':'')+(i===cur?' cur':'')+(manual?' manual':'');
-        html+='<td class="'+cls+'" data-s="'+si+'" data-r="'+ri+'" data-i="'+i+'" tabindex="0">'+(val?esc(val)+(manual?'<span class="mtag">manual</span>':''):'&middot;')+'</td>';
+        if(val&&i>projEnd){ proj=projectRun(r,i); projEnd=proj?proj.run.end:i; }
+        var ghost=!!(proj&&proj.endExcl!=null&&i>=proj.endExcl&&val);
+        var tag='';
+        if(ghost&&i===proj.endExcl) tag='<span class="ptag">projected out</span>';
+        else if(proj&&proj.endExcl!=null&&i===proj.run.end&&proj.endExcl>proj.run.end+1) tag='<span class="ptag spare">+'+(proj.endExcl-1-proj.run.end)+' wk spare</span>';
+        var cls='cell'+(val?'':' empty')+(isSwitch(r,i)?' switch':'')+(i===cur?' cur':'')+(manual?' manual':'')+(ghost?' ghost':'');
+        html+='<td class="'+cls+'" data-s="'+si+'" data-r="'+ri+'" data-i="'+i+'" tabindex="0">'+(val?esc(val)+(manual?'<span class="mtag">manual</span>':'')+tag:'&middot;')+'</td>';
       }
       html+='</tr>';
     });
@@ -901,7 +970,21 @@ function openCellEditor(si,ri,i,v){
   });
   if(curP&&!found) selHtml+='<option value="'+esc(canonLabel(curP))+'" selected>'+esc(canonLabel(curP))+' (archived)</option>';
   selHtml+='<option value="__manual"'+(manualSel?' selected':'')+'>Something not in the position (manual)</option></select>';
+  var proj=curP?projectRun(row,i):null, projHtml='';
+  if(proj){
+    var sp=proj.supply;
+    if(proj.unknown) projHtml='<div class="projbox"><b>No projection yet.</b> Enter an on-hand count for this coffee on the dashboard and this will show how long it lasts.</div>';
+    else if(proj.noBurn) projHtml='<div class="projbox"><b>No projection yet.</b> This slot has no lbs per week set (Settings).</div>';
+    else {
+      var lastWk=proj.endExcl-1, beyond=lastWk>w.length-1;
+      var lastLabel=beyond?'past the end of the calendar (add weeks to see it)':'the week of <b>'+esc(fmtMD(w[lastWk].start))+'</b>';
+      projHtml='<div class="projbox"><div><b class="num">'+lbs(sp.supply)+' lbs</b> supply <span class="muted">(on hand '+lbs(sp.onHand)+' + booked '+lbs(sp.booked)+')</span> &divide; <b class="num">'+lbs(proj.burn)+' lbs/wk</b> = <b class="num">'+proj.exact.toFixed(1)+' weeks</b></div>'+
+        '<div style="margin-top:4px">'+(proj.weeks>0?'Lasts through '+lastLabel+' ('+proj.weeks+' full weeks from '+esc(fmtMD(w[proj.from].start))+')':'<b>Runs out this week.</b>')+'</div>'+
+        '<div style="margin-top:10px;display:flex;gap:10px;align-items:center"><button class="btn small" id="ce-fit">Fit calendar to projection</button><span class="muted" style="font-size:12px">Fills every slot holding this coffee through that week and clears what is planned past it. Never touches a different coffee.</span></div></div>';
+    }
+  }
   var body='<div class="frm">'+
+    (projHtml?'<div class="full">'+projHtml+'</div>':'')+
     '<div class="full"><label>Coffee</label>'+selHtml+'</div>'+
     '<div class="full" id="ce-manual-wrap"'+(manualSel?'':' hidden')+'><label>Manual coffee name</label><input id="ce-val" value="'+esc(manualSel?curVal:'')+'" placeholder="Type the coffee">'+
     '<div class="muted" style="font-size:12px;margin-top:4px">Shows in italics on the calendar. Book it under Position to make it official.</div></div>'+
@@ -918,6 +1001,13 @@ function openCellEditor(si,ri,i,v){
     for(var k=i;k<i+n;k++) row.a[k]=val;
     resync(); renderCalendar(v);
   });
+  var fitBtn=bg.querySelector('#ce-fit');
+  if(fitBtn) fitBtn.onclick=function(){
+    var n=fitRun(row,i);
+    resync(); renderCalendar(v);
+    bg.querySelector('[data-x="cancel"]').click();
+    toast(n?('Calendar fitted: '+n+' week'+(n===1?'':'s')+' updated.'):'Already matches the projection.');
+  };
   bg.querySelector('#ce-sel').onchange=function(){
     var wrap=bg.querySelector('#ce-manual-wrap'); wrap.hidden=this.value!=='__manual';
     if(!wrap.hidden) bg.querySelector('#ce-val').focus();
@@ -1327,7 +1417,7 @@ function renderSettings(v){
   '<button class="btn ghost" id="st-import">Import backup</button>'+
   '</div></div>'+
   '<h2 class="sec">How this works</h2><div class="card muted" style="font-size:13px">'+
-  '<p style="margin-top:0"><b>Calendar</b>: click any cell and pick a coffee from the position, then fill it forward. Book a coffee under Position first and it shows up in the list; anything typed in by hand shows in italics as manual. Archiving a booking takes it out of the list but leaves every week it was already on. Slots sit in three groups; drag a slot by its name to reorder it or move it between groups, or click the name to edit it. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
+  '<p style="margin-top:0"><b>Calendar</b>: click any cell and pick a coffee from the position, then fill it forward. Book a coffee under Position first and it shows up in the list; anything typed in by hand shows in italics as manual. Archiving a booking takes it out of the list but leaves every week it was already on. Slots sit in three groups; drag a slot by its name to reorder it or move it between groups, or click the name to edit it. Click a coffee to see how long its supply lasts (on hand plus booked, divided by what every slot holding it burns) and hit "Fit calendar to projection" to lay it out through that week. Weeks planned past the projection show hatched. Switch weeks highlight automatically, no more manual red text. Seasonal slot done for the year? "Hide" keeps its full history and takes it off the board; bring it back anytime with "Show hidden slots".</p>'+
   '<p><b>Position</b>: book coffees as you contract them. Orders can only be built from coffees in the position. When an order lands, use "Deduct bags from position" on the order so the position stays true.</p>'+
   '<p><b>Runway</b>: every coffee on the calendar for the next 6 weeks shows up on the dashboard by itself, with its weekly usage and minimum worked out from the plan. Enter on-hand lbs from Cropster and the Order column tells you how many bags to buy to land one week of usage above the minimum. Bag sizes come from the position, so book a coffee there to get bags instead of pounds.</p>'+
   '<p><b>Order emails</b>: "Draft emails" on any order writes the PO request, the release email for each importer, and the consolidation email for the annex. Copy, paste into Gmail, send. Nothing sends from this page.</p>'+
