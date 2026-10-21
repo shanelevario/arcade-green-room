@@ -20,7 +20,7 @@
   --good:#16833A; --good-bg:#E4F1E7;
   --warn:#8A6420; --warn-bg:#F5EBD7;
   --bad:#A8555A; --bad-bg:#F9E7E8;
-  --cur-col:#FDF2E5; --band:#E8D2D2; --shadow:0 10px 30px rgba(51,49,46,.14);
+  --cur-col:#FDF2E5; --band:#5A5652; --shadow:0 10px 30px rgba(51,49,46,.14);
   --font-display:'Lydian','Marcellus','Optima',serif;
   --font-body:'Akkurat','Work Sans','Helvetica Neue',Arial,sans-serif;
 }
@@ -33,7 +33,7 @@
     --good:#54B478; --good-bg:#2B3B30;
     --warn:#D9A75B; --warn-bg:#3E362A;
     --bad:#E29CA0; --bad-bg:#463135;
-    --cur-col:#3B342C; --band:#4A3A3C; --shadow:0 10px 30px rgba(0,0,0,.45);
+    --cur-col:#3B342C; --band:#3E3A37; --shadow:0 10px 30px rgba(0,0,0,.45);
   }
 }
 :root[data-theme="dark"]{
@@ -44,7 +44,7 @@
   --good:#54B478; --good-bg:#2B3B30;
   --warn:#D9A75B; --warn-bg:#3E362A;
   --bad:#E29CA0; --bad-bg:#463135;
-  --cur-col:#3B342C; --band:#4A3A3C; --shadow:0 10px 30px rgba(0,0,0,.45);
+  --cur-col:#3B342C; --band:#3E3A37; --shadow:0 10px 30px rgba(0,0,0,.45);
 }
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -117,8 +117,8 @@ table.cal thead th .wk{display:block;color:var(--ink-faint);font-size:10px;lette
 table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);min-width:240px;max-width:240px;border-right:1px solid var(--line);font-size:12.5px}
 table.cal thead .rowlabel{z-index:4}
 table.cal .rowlabel .comp{color:var(--ink-soft)}
-table.cal tr.grouprow td{background:var(--band);border-right:none;border-bottom:1px solid var(--line);border-top:2px solid var(--ink);padding:14px 12px 12px}
-table.cal tr.grouprow td.rowlabel{background:var(--band);color:var(--ink);font-family:var(--font-display);letter-spacing:4px;text-transform:uppercase;font-size:15px;white-space:normal;line-height:1.25;border-right:none}
+table.cal tr.grouprow td{background:var(--band);border-right:none;border-bottom:none;border-top:none;padding:14px 12px 12px}
+table.cal tr.grouprow td.rowlabel{background:var(--band);color:#FDF2E5;font-family:var(--font-display);letter-spacing:4px;text-transform:uppercase;font-size:15px;white-space:normal;line-height:1.25;border-right:none}
 table.cal tr.grouprow + tr.secrow td{border-top:none}
 table.cal tr.grouprow td.rowlabel .gcount{font-family:var(--font-body);letter-spacing:.3px;text-transform:none;color:var(--ink-faint);font-size:11px;margin-left:8px}
 table.cal tr.secrow td.rowlabel .nm{cursor:grab}
@@ -1298,13 +1298,13 @@ function openImporterEditor(id,v){
 /* ---------- settings ---------- */
 function renderSettings(v){
   var html='<div class="two-col"><div><h2 class="sec">Emails</h2><div class="card"><div class="frm"><div><label>PO requests go to</label><input id="st-po" value="'+esc(state.team.poContact||'')+'" placeholder="Alex"></div><div class="full muted" style="font-size:12px">Used in the "Draft emails" button on every order.</div></div></div>'+
-  '<h2 class="sec">Weekly usage &amp; minimums<small>per slot, split evenly across its components, feeds the runway</small></h2><div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Slot</th><th class="r">Lbs per week</th><th class="r">Minimum lbs</th></tr></thead><tbody>';
+  '<h2 class="sec">Weekly usage &amp; minimums<small>per slot, split evenly across its components, feeds the runway; hidden slots stay out</small></h2><div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Slot</th><th class="r">Lbs per week</th><th class="r">Minimum lbs</th></tr></thead><tbody>';
   state.groups.forEach(function(g,gi){
     var any=false;
     state.sections.forEach(function(sec,si){
-      if(groupIndexOf(sec)!==gi) return;
+      if(groupIndexOf(sec)!==gi||sec.hidden) return;
       if(!any){ any=true; html+='<tr><td colspan="3" style="font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);background:var(--line-soft)">'+esc(g)+'</td></tr>'; }
-      html+='<tr><td><b>'+esc(sec.name)+'</b>'+(sec.hidden?' <span class="chip plain">Hidden</span>':'')+'</td>'+
+      html+='<tr><td><b>'+esc(sec.name)+'</b></td>'+
         '<td class="r"><input type="number" min="0" step="1" data-su="'+si+'" value="'+esc(sec.usageLbs||0)+'" style="width:100px;text-align:right"></td>'+
         '<td class="r"><input type="number" min="0" step="1" data-sm="'+si+'" value="'+esc(sec.minLbs||0)+'" style="width:100px;text-align:right"></td></tr>';
       if(sec.rows.length>1){
