@@ -12,7 +12,7 @@
   --good:#16833A; --good-bg:#E4F1E7;
   --warn:#8A6420; --warn-bg:#F5EBD7;
   --bad:#A8555A; --bad-bg:#F9E7E8;
-  --cur-col:#FDF2E5; --shadow:0 10px 30px rgba(51,49,46,.14);
+  --cur-col:#FDF2E5; --band:#E8D2D2; --shadow:0 10px 30px rgba(51,49,46,.14);
   --font-display:'Lydian','Marcellus','Optima',serif;
   --font-body:'Akkurat','Work Sans','Helvetica Neue',Arial,sans-serif;
 }
@@ -25,7 +25,7 @@
     --good:#54B478; --good-bg:#2B3B30;
     --warn:#D9A75B; --warn-bg:#3E362A;
     --bad:#E29CA0; --bad-bg:#463135;
-    --cur-col:#3B342C; --shadow:0 10px 30px rgba(0,0,0,.45);
+    --cur-col:#3B342C; --band:#4A3A3C; --shadow:0 10px 30px rgba(0,0,0,.45);
   }
 }
 :root[data-theme="dark"]{
@@ -36,7 +36,7 @@
   --good:#54B478; --good-bg:#2B3B30;
   --warn:#D9A75B; --warn-bg:#3E362A;
   --bad:#E29CA0; --bad-bg:#463135;
-  --cur-col:#3B342C; --shadow:0 10px 30px rgba(0,0,0,.45);
+  --cur-col:#3B342C; --band:#4A3A3C; --shadow:0 10px 30px rgba(0,0,0,.45);
 }
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -109,8 +109,8 @@ table.cal thead th .wk{display:block;color:var(--ink-faint);font-size:10px;lette
 table.cal .rowlabel{position:sticky;left:0;z-index:2;background:var(--surface);min-width:240px;max-width:240px;border-right:1px solid var(--line);font-size:12.5px}
 table.cal thead .rowlabel{z-index:4}
 table.cal .rowlabel .comp{color:var(--ink-soft)}
-table.cal tr.grouprow td{background:var(--ink);border-right:none;border-bottom:none;padding:13px 12px 11px}
-table.cal tr.grouprow td.rowlabel{background:var(--ink);color:var(--bg);font-family:var(--font-display);letter-spacing:3.5px;text-transform:uppercase;font-size:14px;white-space:normal;line-height:1.25;border-right:none}
+table.cal tr.grouprow td{background:var(--band);border-right:none;border-bottom:1px solid var(--line);border-top:2px solid var(--ink);padding:14px 12px 12px}
+table.cal tr.grouprow td.rowlabel{background:var(--band);color:var(--ink);font-family:var(--font-display);letter-spacing:4px;text-transform:uppercase;font-size:15px;white-space:normal;line-height:1.25;border-right:none}
 table.cal tr.grouprow + tr.secrow td{border-top:none}
 table.cal tr.grouprow td.rowlabel .gcount{font-family:var(--font-body);letter-spacing:.3px;text-transform:none;color:var(--ink-faint);font-size:11px;margin-left:8px}
 table.cal tr.secrow td.rowlabel .nm{cursor:grab}
@@ -207,6 +207,14 @@ function normalize(s){
   s.orders=s.orders||[]; s.position=s.position||[]; s.importers=s.importers||[];
   s.team=s.team||{poContact:'Alex'};
   s.groups=(s.groups&&s.groups.length)?s.groups:DEFAULT_GROUPS.slice();
+  /* usage and minimum live on each slot now; split the old category figures
+     across the slots that shared them the first time through */
+  var kc={}; s.sections.forEach(function(sec){ if(sec.usageKey) kc[sec.usageKey]=(kc[sec.usageKey]||0)+1; });
+  function cat(list,key){ var m=(list||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
+  s.sections.forEach(function(sec){
+    if(sec.usageLbs==null) sec.usageLbs=sec.usageKey?Math.round(cat(s.usage,sec.usageKey)/kc[sec.usageKey]):0;
+    if(sec.minLbs==null) sec.minLbs=sec.usageKey?Math.round(cat(s.minimums,sec.usageKey)/kc[sec.usageKey]):0;
+  });
   s.sections.forEach(function(sec){ if(!sec.group||s.groups.indexOf(sec.group)<0) sec.group=defaultGroup(sec,s.groups); });
   s.inventory=s.inventory||[];
   s.inventory.forEach(function(it){ if(!it.id) it.id=uid(); });
@@ -262,9 +270,6 @@ function syncInventory(s){
   s.inventory=s.inventory||[];
   s.position=s.position||[];
   s.position.forEach(function(p){ if(!p.id) p.id=uid(); });
-  var counts={};
-  s.sections.forEach(function(sec){ if(sec.usageKey&&!sec.hidden) counts[sec.usageKey]=(counts[sec.usageKey]||0)+sec.rows.length; });
-  function catVal(list,key){ var m=(list||[]).filter(function(x){return x.key===key;})[0]; return m?Number(m.lbs)||0:0; }
   var cache={};
   function keyOf(name){ var k=invKey(name); if(cache[k]===undefined){ var p=resolvePosition(name,s.position); cache[k]=p?'pos:'+p.id:'manual:'+k; } return cache[k]; }
   function labelOf(name){ var p=resolvePosition(name,s.position); return p?canonLabel(p):String(name).trim(); }
@@ -275,9 +280,9 @@ function syncInventory(s){
     var wkUse={}, wkMin={};
     s.sections.forEach(function(sec){
       if(sec.hidden) return;
-      var n=sec.usageKey?(counts[sec.usageKey]||1):0;
-      var uShare=sec.usageKey?catVal(s.usage,sec.usageKey)/n:0;
-      var mShare=sec.usageKey?catVal(s.minimums,sec.usageKey)/n:0;
+      var n=sec.rows.length||1;
+      var uShare=(Number(sec.usageLbs)||0)/n;
+      var mShare=(Number(sec.minLbs)||0)/n;
       sec.rows.forEach(function(r){
         splitCell((r.a||[])[i]).forEach(function(name){
           var k=keyOf(name);
@@ -764,7 +769,7 @@ function renderCalendar(v){
   });
   function sectionRows(si){
     var sec=state.sections[si], html='';
-    var use=sec.usageKey?usageOf(sec.usageKey)+' lbs/wk':'';
+    var use=sec.usageLbs?sec.usageLbs+' lbs/wk':'';
     html+='<tr class="secrow" draggable="true" data-si="'+si+'"><td class="rowlabel"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px 10px">'+
       '<span class="nm" data-edit="'+si+'" title="Edit this slot, or drag it to a new spot" style="min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sec.name)+(sec.sub?'<span class="sub">'+esc(sec.sub)+'</span>':'')+'</span>'+
       (sec.hidden?'<span class="chip plain">Hidden</span>':'')+
@@ -828,13 +833,15 @@ function renderCalendar(v){
       '<div><label>Subtitle (optional)</label><input id="as-sub" placeholder="e.g. Seasonal"></div>'+
       '<div><label>Components</label><select id="as-n"><option value="1">Single coffee</option><option value="2">Two components (blend)</option></select></div>'+
       '<div><label>Group</label>'+groupSelectHTML('as-g',state.groups[1])+'</div>'+
+      '<div><label>Lbs roasted per week</label><input id="as-use" type="number" min="0" step="1" value="0"></div>'+
+      '<div><label>Minimum lbs on hand</label><input id="as-min" type="number" min="0" step="1" value="0"></div>'+
     '</div>';
     openModal('Add slot',body,function(m){
       var name=m.querySelector('#as-name').value.trim();
       if(!name){ toast('Give the slot a name.'); return false; }
       var n=Number(m.querySelector('#as-n').value)||1;
       var rows=n===2?[{name:'Component 1',a:[]},{name:'Component 2',a:[]}]:[{name:'Coffee',a:[]}];
-      state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows,group:m.querySelector('#as-g').value});
+      state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows,group:m.querySelector('#as-g').value,usageLbs:Number(m.querySelector('#as-use').value)||0,minLbs:Number(m.querySelector('#as-min').value)||0});
       placeSection(state.sections.length-1,null,m.querySelector('#as-g').value);
       resync(); renderCalendar(v); toast('Slot added at the end of its group.');
     });
@@ -859,14 +866,17 @@ function openSlotEditor(si,v){
     '<div><label>Slot name</label><input id="se-name" value="'+esc(sec.name)+'"></div>'+
     '<div><label>Subtitle</label><input id="se-sub" value="'+esc(sec.sub||'')+'"></div>'+
     '<div class="full"><label>Group</label>'+groupSelectHTML('se-g',state.groups[groupIndexOf(sec)])+'</div>'+
+    '<div><label>Lbs roasted per week</label><input id="se-use" type="number" min="0" step="1" value="'+esc(sec.usageLbs||0)+'"></div>'+
+    '<div><label>Minimum lbs on hand</label><input id="se-min" type="number" min="0" step="1" value="'+esc(sec.minLbs||0)+'"></div>'+
     '<div class="full muted" style="font-size:12px">You can also drag a slot by its name to reorder it or drop it onto another group.</div>'+
   '</div>';
   openModal('Edit slot',body,function(m){
     var name=m.querySelector('#se-name').value.trim(); if(!name){ toast('Give the slot a name.'); return false; }
     sec.name=name; sec.sub=m.querySelector('#se-sub').value.trim();
+    sec.usageLbs=Number(m.querySelector('#se-use').value)||0; sec.minLbs=Number(m.querySelector('#se-min').value)||0;
     var g=m.querySelector('#se-g').value;
     if(g!==sec.group) placeSection(si,null,g);
-    markDirty(); renderCalendar(v);
+    resync(); renderCalendar(v);
   });
 }
 function openCellEditor(si,ri,i,v){
@@ -1280,11 +1290,23 @@ function openImporterEditor(id,v){
 /* ---------- settings ---------- */
 function renderSettings(v){
   var html='<div class="two-col"><div><h2 class="sec">Emails</h2><div class="card"><div class="frm"><div><label>PO requests go to</label><input id="st-po" value="'+esc(state.team.poContact||'')+'" placeholder="Alex"></div><div class="full muted" style="font-size:12px">Used in the "Draft emails" button on every order.</div></div></div>'+
-  '<h2 class="sec">Weekly usage<small>category averages, shown on the calendar</small></h2><div class="card tblwrap"><table class="data"><thead><tr><th>Category</th><th class="r">Lbs per week</th></tr></thead><tbody>';
-  state.usage.forEach(function(u,idx){ html+='<tr><td>'+esc(u.label)+'</td><td class="r"><input type="number" min="0" data-u="'+idx+'" value="'+esc(u.lbs)+'" style="width:100px;text-align:right"></td></tr>'; });
-  html+='</tbody></table></div>'+
-  '<h2 class="sec">Minimum inventory<small>reorder trigger, lbs on hand</small></h2><div class="card tblwrap"><table class="data"><thead><tr><th>Category</th><th class="r">Minimum lbs</th></tr></thead><tbody>';
-  state.minimums.forEach(function(u2,idx){ html+='<tr><td>'+esc(u2.label)+'</td><td class="r"><input type="number" min="0" data-m="'+idx+'" value="'+esc(u2.lbs)+'" style="width:100px;text-align:right"></td></tr>'; });
+  '<h2 class="sec">Weekly usage &amp; minimums<small>per slot, split evenly across its components, feeds the runway</small></h2><div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Slot</th><th class="r">Lbs per week</th><th class="r">Minimum lbs</th></tr></thead><tbody>';
+  state.groups.forEach(function(g,gi){
+    var any=false;
+    state.sections.forEach(function(sec,si){
+      if(groupIndexOf(sec)!==gi) return;
+      if(!any){ any=true; html+='<tr><td colspan="3" style="font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);background:var(--line-soft)">'+esc(g)+'</td></tr>'; }
+      html+='<tr><td><b>'+esc(sec.name)+'</b>'+(sec.hidden?' <span class="chip plain">Hidden</span>':'')+'</td>'+
+        '<td class="r"><input type="number" min="0" step="1" data-su="'+si+'" value="'+esc(sec.usageLbs||0)+'" style="width:100px;text-align:right"></td>'+
+        '<td class="r"><input type="number" min="0" step="1" data-sm="'+si+'" value="'+esc(sec.minLbs||0)+'" style="width:100px;text-align:right"></td></tr>';
+      if(sec.rows.length>1){
+        var n=sec.rows.length;
+        sec.rows.forEach(function(r){
+          html+='<tr><td class="muted" style="padding-left:28px;font-size:12.5px">'+esc(r.name)+'</td><td class="r num muted">'+lbs(Math.round((Number(sec.usageLbs)||0)/n))+'</td><td class="r num muted">'+lbs(Math.round((Number(sec.minLbs)||0)/n))+'</td></tr>';
+        });
+      }
+    });
+  });
   html+='</tbody></table></div></div>'+
   '<div><h2 class="sec">Team access</h2><div class="card" id="st-team"><span class="muted">Loading team list&hellip;</span></div>'+
   '<h2 class="sec">Data</h2><div class="card">'+
@@ -1302,8 +1324,8 @@ function renderSettings(v){
   '</div></div></div>';
   v.innerHTML=html;
   v.querySelector('#st-po').onchange=function(){ state.team.poContact=this.value.trim()||'Alex'; markDirty(); };
-  v.querySelectorAll('input[data-u]').forEach(function(inp){ inp.onchange=function(){ state.usage[+inp.getAttribute('data-u')].lbs=Number(inp.value)||0; resync(); }; });
-  v.querySelectorAll('input[data-m]').forEach(function(inp){ inp.onchange=function(){ state.minimums[+inp.getAttribute('data-m')].lbs=Number(inp.value)||0; resync(); }; });
+  v.querySelectorAll('input[data-su]').forEach(function(inp){ inp.onchange=function(){ state.sections[+inp.getAttribute('data-su')].usageLbs=Number(inp.value)||0; resync(); renderSettings(v); }; });
+  v.querySelectorAll('input[data-sm]').forEach(function(inp){ inp.onchange=function(){ state.sections[+inp.getAttribute('data-sm')].minLbs=Number(inp.value)||0; resync(); renderSettings(v); }; });
   loadTeamCard(v.querySelector('#st-team'));
   v.querySelector('#st-export').onclick=function(){
     var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
