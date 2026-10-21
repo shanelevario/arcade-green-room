@@ -235,6 +235,8 @@ function normalize(s){
    and a coffee filling two slots at once (like Palmera) gets both shares.
    Anything edited by hand is left alone. */
 var INV_WINDOW=6;
+/* minimum on hand is always this many weeks of usage, per component */
+var MIN_WEEKS=3;
 /* Calendar groups. Every slot belongs to one; the first run sorts existing
    slots by what they are, and the slot editor can move them after that. */
 var DEFAULT_GROUPS=['Blends, Decaf & Dark Roast','Custom Blends','Single Origins & Special Releases'];
@@ -290,7 +292,7 @@ function syncInventory(s){
       if(sec.hidden) return;
       var n=sec.rows.length||1;
       var uShare=(Number(sec.usageLbs)||0)/n;
-      var mShare=(Number(sec.minLbs)||0)/n;
+      var mShare=uShare*MIN_WEEKS;
       sec.rows.forEach(function(r){
         splitCell((r.a||[])[i]).forEach(function(name){
           var k=keyOf(name);
@@ -326,6 +328,7 @@ function syncInventory(s){
     }
     if(k.indexOf('pos:')===0&&it.coffee!==want.name){ it.coffee=want.name; changed=true; }
     if(!it.custom&&(it.usageLbs!==u||it.minLbs!==m)){ it.usageLbs=u; it.minLbs=m; changed=true; }
+    if(it.custom){ var cm=Math.round((Number(it.usageLbs)||0)*MIN_WEEKS); if(it.minLbs!==cm){ it.minLbs=cm; changed=true; } }
   });
   var before=s.inventory.length;
   s.inventory=s.inventory.filter(function(it){
@@ -738,14 +741,14 @@ function openInventoryEditor(id,v){
   var body='<div class="frm">'+
     '<div class="full"><label>Coffee</label><input id="iv-coffee" list="iv-dl" value="'+esc(it.coffee)+'">'+datalistHTML('iv-dl')+'</div>'+
     '<div><label>Lbs used per week</label><input id="iv-use" type="number" min="0" step="1" value="'+esc(it.usageLbs)+'"></div>'+
-    '<div><label>Minimum lbs (reorder point)</label><input id="iv-min" type="number" min="0" step="1" value="'+esc(it.minLbs)+'"></div>'+
+    '<div><label>Minimum lbs</label><div class="muted" style="padding-top:8px">'+MIN_WEEKS+' weeks of usage, worked out for you</div></div>'+
     '<div class="full muted" style="font-size:12px">These numbers are worked out from the calendar automatically. Changing them here pins your values for this coffee and stops the calendar overwriting them.</div>'+
   '</div>';
   openModal(id?'Edit tracked coffee':'Track a coffee',body,function(m){
     if(!m.querySelector('#iv-coffee').value.trim()){ toast('Give the coffee a name.'); return false; }
     it.coffee=m.querySelector('#iv-coffee').value.trim();
     it.usageLbs=Number(m.querySelector('#iv-use').value)||0;
-    it.minLbs=Number(m.querySelector('#iv-min').value)||0;
+    it.minLbs=Math.round(it.usageLbs*MIN_WEEKS);
     it.custom=true;
     if(!id) state.inventory.push(it);
     markDirty(); renderDashboard(v);
@@ -842,14 +845,14 @@ function renderCalendar(v){
       '<div><label>Components</label><select id="as-n"><option value="1">Single coffee</option><option value="2">Two components (blend)</option></select></div>'+
       '<div><label>Group</label>'+groupSelectHTML('as-g',state.groups[1])+'</div>'+
       '<div><label>Lbs roasted per week</label><input id="as-use" type="number" min="0" step="1" value="0"></div>'+
-      '<div><label>Minimum lbs on hand</label><input id="as-min" type="number" min="0" step="1" value="0"></div>'+
+
     '</div>';
     openModal('Add slot',body,function(m){
       var name=m.querySelector('#as-name').value.trim();
       if(!name){ toast('Give the slot a name.'); return false; }
       var n=Number(m.querySelector('#as-n').value)||1;
       var rows=n===2?[{name:'Component 1',a:[]},{name:'Component 2',a:[]}]:[{name:'Coffee',a:[]}];
-      state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows,group:m.querySelector('#as-g').value,usageLbs:Number(m.querySelector('#as-use').value)||0,minLbs:Number(m.querySelector('#as-min').value)||0});
+      state.sections.push({id:uid(),name:name,sub:m.querySelector('#as-sub').value.trim(),rows:rows,group:m.querySelector('#as-g').value,usageLbs:Number(m.querySelector('#as-use').value)||0});
       placeSection(state.sections.length-1,null,m.querySelector('#as-g').value);
       resync(); renderCalendar(v); toast('Slot added at the end of its group.');
     });
@@ -875,13 +878,13 @@ function openSlotEditor(si,v){
     '<div><label>Subtitle</label><input id="se-sub" value="'+esc(sec.sub||'')+'"></div>'+
     '<div class="full"><label>Group</label>'+groupSelectHTML('se-g',state.groups[groupIndexOf(sec)])+'</div>'+
     '<div><label>Lbs roasted per week</label><input id="se-use" type="number" min="0" step="1" value="'+esc(sec.usageLbs||0)+'"></div>'+
-    '<div><label>Minimum lbs on hand</label><input id="se-min" type="number" min="0" step="1" value="'+esc(sec.minLbs||0)+'"></div>'+
+
     '<div class="full muted" style="font-size:12px">You can also drag a slot by its name to reorder it or drop it onto another group.</div>'+
   '</div>';
   openModal('Edit slot',body,function(m){
     var name=m.querySelector('#se-name').value.trim(); if(!name){ toast('Give the slot a name.'); return false; }
     sec.name=name; sec.sub=m.querySelector('#se-sub').value.trim();
-    sec.usageLbs=Number(m.querySelector('#se-use').value)||0; sec.minLbs=Number(m.querySelector('#se-min').value)||0;
+    sec.usageLbs=Number(m.querySelector('#se-use').value)||0;
     var g=m.querySelector('#se-g').value;
     if(g!==sec.group) placeSection(si,null,g);
     resync(); renderCalendar(v);
@@ -1298,7 +1301,7 @@ function openImporterEditor(id,v){
 /* ---------- settings ---------- */
 function renderSettings(v){
   var html='<div class="two-col"><div><h2 class="sec">Emails</h2><div class="card"><div class="frm"><div><label>PO requests go to</label><input id="st-po" value="'+esc(state.team.poContact||'')+'" placeholder="Alex"></div><div class="full muted" style="font-size:12px">Used in the "Draft emails" button on every order.</div></div></div>'+
-  '<h2 class="sec">Weekly usage &amp; minimums<small>per slot, split evenly across its components, feeds the runway; hidden slots stay out</small></h2><div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Slot</th><th class="r">Lbs per week</th><th class="r">Minimum lbs</th></tr></thead><tbody>';
+  '<h2 class="sec">Weekly usage &amp; minimums<small>set lbs per week per slot; components split evenly and the minimum is always '+MIN_WEEKS+' weeks of usage</small></h2><div class="card tblwrap" style="padding:0"><table class="data"><thead><tr><th>Slot</th><th class="r">Lbs per week</th><th class="r">Minimum lbs ('+MIN_WEEKS+' weeks)</th></tr></thead><tbody>';
   state.groups.forEach(function(g,gi){
     var any=false;
     state.sections.forEach(function(sec,si){
@@ -1306,11 +1309,11 @@ function renderSettings(v){
       if(!any){ any=true; html+='<tr><td colspan="3" style="font-family:var(--font-display);letter-spacing:2.5px;text-transform:uppercase;font-size:11.5px;color:var(--ink-soft);background:var(--line-soft)">'+esc(g)+'</td></tr>'; }
       html+='<tr><td><b>'+esc(sec.name)+'</b></td>'+
         '<td class="r"><input type="number" min="0" step="1" data-su="'+si+'" value="'+esc(sec.usageLbs||0)+'" style="width:100px;text-align:right"></td>'+
-        '<td class="r"><input type="number" min="0" step="1" data-sm="'+si+'" value="'+esc(sec.minLbs||0)+'" style="width:100px;text-align:right"></td></tr>';
+        '<td class="r num muted">'+lbs(Math.round((Number(sec.usageLbs)||0)*MIN_WEEKS))+'</td></tr>';
       if(sec.rows.length>1){
         var n=sec.rows.length;
         sec.rows.forEach(function(r){
-          html+='<tr><td class="muted" style="padding-left:28px;font-size:12.5px">'+esc(r.name)+'</td><td class="r num muted">'+lbs(Math.round((Number(sec.usageLbs)||0)/n))+'</td><td class="r num muted">'+lbs(Math.round((Number(sec.minLbs)||0)/n))+'</td></tr>';
+          html+='<tr><td class="muted" style="padding-left:28px;font-size:12.5px">'+esc(r.name)+'</td><td class="r num muted">'+lbs(Math.round((Number(sec.usageLbs)||0)/n))+'</td><td class="r num muted">'+lbs(Math.round((Number(sec.usageLbs)||0)/n*MIN_WEEKS))+'</td></tr>';
         });
       }
     });
@@ -1333,7 +1336,6 @@ function renderSettings(v){
   v.innerHTML=html;
   v.querySelector('#st-po').onchange=function(){ state.team.poContact=this.value.trim()||'Alex'; markDirty(); };
   v.querySelectorAll('input[data-su]').forEach(function(inp){ inp.onchange=function(){ state.sections[+inp.getAttribute('data-su')].usageLbs=Number(inp.value)||0; resync(); renderSettings(v); }; });
-  v.querySelectorAll('input[data-sm]').forEach(function(inp){ inp.onchange=function(){ state.sections[+inp.getAttribute('data-sm')].minLbs=Number(inp.value)||0; resync(); renderSettings(v); }; });
   loadTeamCard(v.querySelector('#st-team'));
   v.querySelector('#st-export').onclick=function(){
     var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
